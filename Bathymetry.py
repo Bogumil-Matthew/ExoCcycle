@@ -1,0 +1,791 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Sep  6 15:20:00 2024
+
+@author: bogumilmatt-21
+"""
+
+#######################################################################
+############################### Imports ###############################
+#######################################################################
+from ExoCcycle import utils # type: ignore
+import os
+from netCDF4 import Dataset
+import numpy as np
+from scipy.interpolate import NearestNDInterpolator
+import matplotlib.pyplot as plt
+
+#######################################################################
+#################### ExoCcycle Create Bathymetries ####################
+#######################################################################
+
+class BathyMeasured():
+    '''
+    Measured topography (~bathymetry) Venus/Mars/Moon/present-day Earth.
+
+    getTopo is a method to download different topography models.
+        getTopo(self, body = {'Mars':'True', 'Venus':'False', 'Moon':'False', 'Earth':'False'}):
+
+        1. Moon:    https://pgda.gsfc.nasa.gov/products/54 or https://pgda.gsfc.nasa.gov/products/95 (include above 60 degrees)
+        2. Mars:    !wget https://github.com/andrebelem/PlanetaryMaps/raw/v1.0/mola32.nc
+        3. Venus:   https://astrogeology.usgs.gov/search/map/venus_magellan_global_c3_mdir_colorized_topographic_mosaic_6600m
+        4. Earth:   etopo
+    
+    readTopo is a method to read in a downloaded topography models. They are interpolated and
+    saved to the same input directory. Topography model was already saved with a chosen resolution
+    then this model is read instead.
+        readTopo(self, data_dir, new_resolution = 1, verbose=True):
+    
+    setSeaLevel is a method to 
+        setSeaLevel(self, basinVolume = {"on":True, 'uncompactedVol':None}, oceanArea = {"on":True, "area":0.7}, isostaticCompensation = {"on":False}):
+        1. Might be useful for flexural Isostasy:
+            https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017JB014571
+            https://pages.uoregon.edu/rdorsey/BasinAnalysis/AngevineEtal1990/Chapt%205%20Flexure.pdf
+        2. Might be useful for the Isostasy
+            https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017GL073334
+
+    saveBathymetry is a method used to save bathymetry created after running setSeaLevel
+        saveBathymetry(self, filePath):
+
+    loadBathymetry is a method used to load bathymetry created after running setSeaLevel() and saveBathymetry()
+        loadBathymetry(self, filePath):
+
+    '''
+    
+    def __init__(self, body=None):
+        self.x = 1;
+
+        if body == None:
+            print('No body was chosen. Define input body as "Venus" | "Earth" | "Mars" | "Moon"');
+        else:
+            if body.lower() == "venus2":
+                self.model = "Venus2";
+                self.fidName = "Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc";
+                self.variables = {"lat":"lat", "lon":"lon", "elev":["Band1","Band2","Band3"]};
+                self.initiallykm = False;
+                self.radiuskm = 6051.8;
+                self.highlatP = .10; # this is the hb[10] value from LOSCAR.
+            elif body.lower() == "venus":
+                self.model = "Venus";
+                self.fidName = "topogrd.nc";
+                self.variables = {"lat":"lat", "lon":"lon", "elev":"elev"};
+                self.initiallykm = False;
+                self.radiuskm = 6051.8;
+                self.highlatP = .10; # this is the hb[10] value from LOSCAR.
+            elif body.lower() == "earth":
+                self.model = "Earth";
+                self.fidName = "ETOPO1_Ice_c_gdal.nc";
+                self.variables = {"lat":"lat", "lon":"lon", "elev":"z"};
+                self.initiallykm = False;
+                self.radiuskm = 6371.0;
+                self.highlatP = .10; # this is the hb[10] value from LOSCAR.
+            elif body.lower() == "mars":
+                self.model = "Mars";
+                self.fidName = "mola32.nc";
+                self.variables = {"lat":"latitude", "lon":"longitude", "elev":"alt"};
+                self.initiallykm = False;
+                self.radiuskm = 3389.5;
+                self.highlatP = .10; # this is the hb[10] value from LOSCAR.
+            elif body.lower() == "moon":
+                self.model = "Moon";
+                self.fidName = "LDEM64_PA_pixel_202405.nc";
+                self.variables = {"lat":"lat", "lon":"lon", "elev":"z"};
+                self.initiallykm = True;
+                self.radiuskm = 1737.4;
+                self.highlatP = .10; # this is the hb[10] value from LOSCAR.
+            else:
+                print('Chosen a implemented body. Define input body as "Venus" | "Earth" | "Mars" | "Moon"');
+
+
+
+    
+    def getTopo(self, data_dir, verbose=True):
+        """
+        getTopo is a meethod used to download solar system topography
+        models that can be used in further analysis
+
+        Parameters
+        ----------
+        data_dir : STRING
+            A directory which you store local data within. Note that this
+            function will download directories [data_dir]/topographies
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Returns
+        -------
+        None.
+
+        """
+        # Make directory for storing topography model
+        utils.create_file_structure([data_dir+"/topographies",
+                                     data_dir+"/topographies/Earth",
+                                     data_dir+"/topographies/Venus",
+                                     data_dir+"/topographies/Mars",
+                                     data_dir+"/topographies/Moon"],
+                                     root = True,
+                                     verbose=verbose)
+
+        # Download model
+        if self.model == "Venus2":
+            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif"):
+                os.system("wget -O {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif https://planetarymaps.usgs.gov/mosaic/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif".format(data_dir, self.model));
+            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif".format(data_dir, self.model)):
+                os.system("export PROJ_IGNORE_CELESTIAL_BODY=YES &&\
+                        gdalwarp -t_srs EPSG:4326 {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif".format(data_dir, self.model));
+            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model)):
+                os.system("gdal_translate -of NetCDF {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model));
+            if verbose:
+                os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+        elif self.model == "Venus":
+            if os.path.exists("{0}/topographies/{1}/topogrd.img"):
+                os.system("wget -O {0}/topographies/{1}/topogrd.img https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img".format(data_dir, self.model));
+            if os.path.exists("{0}/topographies/{1}/topogrd.nc"):
+                # Write netCDF file
+                ## Read .img
+                fid = open("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model), 'rb');
+                elevmodel = np.fromfile(fid, dtype=np.uint8);
+                lonmodel, latmodel = np.meshgrid(np.arange(-180, 180, 1), np.arange(90-1/2, -90, -1) )
+                elevmodel = elevmodel.reshape(180,360);
+                ## Make netCDF file
+                ncfile = Dataset("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model), mode='w', format='NETCDF4_CLASSIC') 
+
+                ## Define dimension
+                lat_dim = ncfile.createDimension('lat', len(elevmodel[:,0]));        # latitude axis
+                lon_dim = ncfile.createDimension('lon', len(elevmodel[0,:]));       # longitude axis
+                
+                ### Define lat/lon with the same names as dimensions to make variables.
+                lat = ncfile.createVariable('lat', np.float32, ('lat',));
+                lat.units = 'degrees_north'; lat.long_name = 'latitude';
+                lon = ncfile.createVariable('lon', np.float32, ('lon',));
+                lon.units = 'degrees_east'; lon.long_name = 'longitude';
+
+                ## Define a 2D variable to hold the elevation data
+                elev = ncfile.createVariable('elev',np.float64,('lat','lon'))
+                elev.units = 'meters'
+                elev.standard_name = 'elevation'
+                
+                ## Format
+                ncfile.title='{} Topography resampled at {:0.0f}deg'.format(self.model, 1)
+
+                ## Populate the variables
+                lat[:]  = latmodel[:,0];
+                lon[:]  = lonmodel[0,:];
+                elev[:] = elevmodel;
+                
+                ## Close the netcdf
+                ncfile.close(); 
+            if verbose:
+                os.system("gmt grdimage {0}/topographies/{1}/topogrd.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+        elif self.model == "Earth":
+            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz"):
+                os.system("wget -O {0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO1/data/ice_surface/cell_registered/netcdf/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir))
+            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd"):
+                os.system("yes N | gzip -k -d {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir, self.model));
+            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.nc"):
+                os.system("gmt grdconvert {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -fg".format(data_dir, self.model))
+            if verbose:
+                os.system("gmt grdimage {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+        elif self.model == "Mars":
+            if os.path.exists("{0}/topographies/{1}/mola32.nc"):
+                os.system("wget -O {0}/topographies/{1}/mola32.nc https://github.com/andrebelem/PlanetaryMaps/raw/v1.0/mola32.nc".format(data_dir, self.model))
+            if verbose:
+                os.system("gmt grdimage {0}/topographies/{1}/mola32.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+        elif self.model == "Moon":
+            if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.grd"):
+                os.system("wget -O {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd https://pgda.gsfc.nasa.gov/data/LOLA_PA/LDEM64_PA_pixel_202405.grd".format(data_dir, self.model));
+            if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.nc"):
+                os.system("gmt grdconvert {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -fg".format(data_dir, self.model));
+            if verbose:
+                os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+
+
+    def readTopo(self, data_dir, new_resolution = 1, verbose=True):
+        """
+        readTopo method reads downloaded topography models. They are then
+        interpolated and saved to the same input directory. If the topography
+        model was previously written in the chosen resolution then this model
+        will read that file instead instead.
+
+        Parameters
+        ----------
+        data_dir : STRING
+            A directory which you store local data within. Note that this
+            function will download directories [data_dir]/topographies
+        new_resolution : INT
+            The resolution, in degrees, of the output topography. Note that this
+            should often be lower than input resolution. For Earth, Moon, Mars,
+            and Venus 0.5 degrees is acceptable. The default is 1.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Defines
+        -------
+        self.elev : NUMPY ARRAY
+            nx2n array representing cell registered topography, in m.
+        self.lon : NUMPY ARRAY
+            nx2n array representing cell registered longitudes, in deg,
+            ranging from [-180, 180]. Longitudes change from column to column.
+        self.lat : NUMPY ARRAY
+            nx2n array representing cell registered latitudes, in deg,
+            ranging from [-90, 90]. Latitudes change from row to row.
+
+
+        Returns
+        -------
+        None.
+
+        """
+        # Define the resampled topography output file name.
+        resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.0f}deg.nc".format(data_dir,  self.model, new_resolution);
+
+        # If the resampled topography model already exists then read model
+        # instead of continuing.
+        if os.path.exists(resampledTopoPath):
+            # Read resampled topography file
+            self.nc = Dataset(resampledTopoPath);
+
+            # Set latitude/longitude/elev
+            self.lon, self.lat  = np.meshgrid( np.array(self.nc['lon'][:]), np.array(self.nc['lat'][:]) );
+            self.elev = np.array(self.nc['elev'][:]);
+
+            if verbose:
+                print("Shape of input topography arrays")
+                print(np.shape(self.lon));
+                print(np.shape(self.lat));
+                print(np.shape(self.elev));
+                print((self.lon));
+                print((self.lat));
+                print((self.elev));
+                
+            plt.figure(figsize=(8, 6))
+            contour = plt.contourf(self.lon,self.lat,self.elev)
+            plt.xlabel("Longitude [deg]")
+            plt.ylabel("Latitude [deg]")
+            plt.title("{} resampled at {:0.0f} degree resolution".format(self.model, new_resolution))
+            plt.clim(np.min(self.elev), np.max(self.elev))  # Set the colorbar range
+
+
+            # Add a horizontal colorbar with specified range
+            cbar = plt.colorbar(contour, orientation='horizontal')
+            cbar.set_label('Topography [m]')  # Customize the colorbar label
+            
+
+            plt.savefig("{}/topographies/{}/{}_resampled_{:0.0f}deg.png".format(data_dir, self.model, self.model, new_resolution), dpi=600)
+
+            # return
+            return
+        
+        else:
+            # Load netCdf file
+            TopoPath = "{}/topographies/{}/{}".format(data_dir, self.model, self.fidName);
+            self.nc = Dataset(TopoPath);
+
+            # If the grid is very large (higher than 6 arc minute resoluion) then resample
+            # using gmt then reload netCDF
+            if len( np.array(self.nc[self.variables['elev']][:])[0,:] ) > 3600:
+                # Close dataset
+                self.nc.close();
+                # Resample and reread dataset 
+                os.system("gmt grdsample {0} -Rd -I1d -rp -G{1}".format(TopoPath, TopoPath.replace(".nc", "_resampled.nc")))
+                TopoPath = TopoPath.replace(".nc", "_resampled.nc");
+                self.nc = Dataset(TopoPath);
+                # Need to redefine the lat/lon/elevation naming scheme
+                self.variables = {"lat":"lat", "lon":"lon", "elev":"z"};
+
+            # Define latitude/longitude/elevation
+            self.lat_netcdf  = np.array(self.nc[self.variables['lat']][:]);
+            self.lon_netcdf  = np.array(self.nc[self.variables['lon']][:]);
+            if self.initiallykm:
+                self.elev_netcdf = np.array(self.nc[self.variables['elev']][:])*1e3;
+            else:
+                self.elev_netcdf = np.array(self.nc[self.variables['elev']][:]);
+            
+            # Close file
+            self.nc.close()
+
+            # Check dimenions of lat/lon make mesh grids if not already
+            if len(np.shape(self.lat_netcdf)) == 1:
+                # lat and lon are vectors, not arrays
+
+                # Make lat and lon into arrays
+                self.lon_netcdf, self.lat_netcdf = np.meshgrid(self.lon_netcdf, self.lat_netcdf);
+            
+            # Make latitude and longitude defined on [-90,90] and [0,360], respectively.
+            if np.max(np.max(self.lat_netcdf)) > 90:
+                print('changing latitude')
+                self.lat_netcdf[self.lat_netcdf<90] = 90 - self.lat_netcdf[self.lat_netcdf<90];
+                self.lat_netcdf[self.lat_netcdf>90] = self.lat_netcdf[self.lat_netcdf>90] - 90;
+
+            if np.max(np.max(self.lon_netcdf)) > 180:
+                print('changing longitude')
+                self.lon_netcdf[self.lon_netcdf>180] = self.lon_netcdf[self.lon_netcdf>180] - 360;
+
+                # Roll all arrays such that they start and end at -180, and 180 longitude, respectively.
+                columns = np.argwhere(self.lon_netcdf[0,:]==np.max(self.lon_netcdf[0,:]) )[0][0];
+                self.lon_netcdf  = np.roll(self.lon_netcdf, columns+1);
+                #self.lat_netcdf  = np.roll(self.lat_netcdf, columns+1);
+                self.elev_netcdf = np.roll(self.elev_netcdf, columns+1);
+            
+            # Create grid to interpolate to
+            self.lon, self.lat = np.meshgrid(np.arange(-180+new_resolution/2, 180-new_resolution/2, new_resolution), np.arange(90-new_resolution/2, -90, -new_resolution) )
+
+            # Interpolate new latitude/longitude/elevation
+            if verbose:
+                print("Shape of input topography arrays")
+                print(np.shape(self.lon_netcdf));
+                print(np.shape(self.lat_netcdf));
+                print(np.shape(self.elev_netcdf));
+                print((self.lon_netcdf));
+                print((self.lat_netcdf));
+                print((self.elev_netcdf));
+            
+            interp = NearestNDInterpolator(list(zip(self.lon_netcdf.flatten(), self.lat_netcdf.flatten())), self.elev_netcdf.flatten());
+            self.elev = interp(self.lon, self.lat);
+    
+            # Write resampled topography to be read for later use.
+            
+            # Make ncfile
+            ncfile = Dataset(resampledTopoPath, mode='w', format='NETCDF4_CLASSIC') 
+
+            # Define dimension
+            lat_dim = ncfile.createDimension('lat', len(self.elev[:,0]));        # latitude axis
+            lon_dim = ncfile.createDimension('lon', len(self.elev[0,:]));       # longitude axis
+            #elev_dim = ncfile.createDimension('elev', self.elev);
+            
+            # Define lat/lon with the same names as dimensions to make variables.
+            lat = ncfile.createVariable('lat', np.float32, ('lat',));
+            lat.units = 'degrees_north'; lat.long_name = 'latitude';
+            lon = ncfile.createVariable('lon', np.float32, ('lon',));
+            lon.units = 'degrees_east'; lon.long_name = 'longitude';
+
+            # Define a 2D variable to hold the elevation data
+            elev = ncfile.createVariable('elev',np.float64,('lat','lon'))
+            elev.units = 'meters'
+            elev.standard_name = 'elevation'
+            
+            # Format
+            ncfile.title='{} Topography resampled at {:0.0f}deg'.format(self.model, new_resolution)
+
+            # Populate the variables
+            lat[:]  = self.lat[:,0];
+            lon[:]  = self.lon[0,:];
+            elev[:] = self.elev;
+            
+            # Close the netcdf
+            ncfile.close(); 
+             
+
+    def setSeaLevel(self, basinVolume = {"on":True, 'uncompactedVol':None}, oceanArea = {"on":True, "area":0.7}, isostaticCompensation = {"on":False}, verbose=True):
+        """
+        setSetLevel method is used to define a bathymetry model from a
+        topo model. The topography model can be defined by running the
+        method readTopo.
+
+        
+        Parameters
+        ----------
+        basinVolume : DICTIONARY
+            Option to define bathymetry by flooding topography with
+            basinVolume['uncompactedVol'] amount of ocean water, in m3.
+        oceanArea : DICTIONARY
+            Option to define bathymetry by flooding topography until
+            oceanArea['area'], decimal percent, of global area is covered
+            with oceans.
+        isostaticCompensation : DICTIONARY
+            An option to apply isostatic compensation to for ocean loading
+            on the topography. Option assumes a uniform physical properties
+            of the lithosphere.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+            
+        Defines
+        -------
+        self.bathymetry : NUMPY ARRAY
+            nx2n array representing seafloor depth, in m, with positive values.
+        self.bathymetryAreaDist : NUMPY LIST
+            A histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the exclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.bathymetryAreaDist_wHighlat : NUMPY LIST
+            This is the same as bathymetryAreaDist, but includes the high latitude
+            seafloor distribution of seafloor depths.
+        self.AOC : FLOAT
+            Total sea surface area, in m2.
+        self.VOC : FLOAT
+            Total basin volume, in m3.
+        self.highlatA : FLOAT
+            Total high latitude area, in m2. Note that this is not the hb[10] value
+            in the LOSCAR earth system model. self.highlatP is hb[10].
+        self.highlatlat : FLOAT
+            The lowest latitude of the high latitude cut off, in degree.
+
+
+        Returns
+        -------
+        None.
+        """
+
+        # Show options chosen for bathymetry model creation
+        methodChoice = None;
+        methodChoice
+        if basinVolume['on']:
+            methodChoice = "basin volume constraint";
+        if oceanArea['on']:
+            if methodChoice is None:
+                methodChoice = "basin area constraint";
+            else:
+                print("{} was also chosen. Using {}.".format(methodChoice));
+
+        
+        # Define degree to area weights
+        areaWeights = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+
+        # Define initial bathymetry model with minimum elevation set to 0 m (sea-level)
+        # Note that topography represents values above sea-level with positive values.
+        topography = self.elev - np.min(np.min(self.elev));
+
+        # Feed bathymetry initial model into selected bathymetry calculation function. 
+        if methodChoice == "basin volume constraint":
+            bathymetry = self.waterVolumeMethod(topography, oceanArea, areaWeights, verbose = False)
+        elif methodChoice == "basin area constraint":
+            bathymetry = self.oceanAreaMethod(topography, basinVolume, areaWeights, verbose = False)
+
+        # Calculate and define properties of bathymetry model
+        self.bathymetry = bathymetry;
+        self.AOC = np.sum(np.sum( areaWeights[self.bathymetry<0] ))
+        self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[self.bathymetry<0] ))
+        
+        ## Sets self.highlatA and self.highlatlat
+        self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
+
+        ## Define global distribution of sea seafloor depths
+        ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
+        ## are define here.
+        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat = calculateBathymetryDistribution(self.bathymetry, areaWeights, self.highlatlat);
+
+
+        # Define methods for creating bathymetry models.
+
+        def oceanAreaMethod(self, topography, oceanArea, areaWeights, verbose=True):
+            """
+            oceanAreaMethod method is use to calculate and define bathymetry as the
+            topography flooded until the oceans cover some decimal percentage of 
+            the planet.
+
+
+            Parameters
+            ----------
+            topography : NUMPY ARRAY
+                nx2n array representing cell registered topography, in m.
+            oceanArea : DICTIONARY
+                Option to define bathymetry by flooding topography until
+                oceanArea['area'], decimal percent, of global area is covered
+                with oceans.
+            areaWeights : NUMPY ARRAY
+                An array of global degree to area weights. The size is dependent on
+                input resolution. The sum of the array equals 4 pi radius^2 for 
+                sufficiently high resolution.
+            verbose : BOOLEAN, optional
+                Reports more information about process. The default is True.
+
+            Returns
+            -------
+            bathymetry : NUMPY ARRAY
+                nx2n array representing seafloor depth, in m, with positive values.
+                Bathymetry is define by the method of this function. Any areas above
+                sea-level are assigned a value of np.nan.
+            """
+            # Iterate flooding (meter-by-meter) until the desired amount of ocean
+            # planetary surface area is flooded.
+            calculatedOceanAreaDPercent = 0;
+            deepestSeafloor = 0;
+            while calculatedOceanAreaDPercent < oceanArea['area']:
+                # Add 1 meter of flooding
+                deepestSeafloor += 1;
+                bathymetry = topography-deepestSeafloor;
+                # Do isostatic compensation calculation for ocean loading
+                if self.isostaticCompensation['on']:
+                    bathymetry = self.isostaticCompensationMethod(bathymetry);
+                # Calculate ocean area, in m2.
+                AOC = np.sum(np.sum( areaWeights[bathymetry<0] ))
+                # Calculate ocean area, in decimal percent.
+                calculatedOceanAreaDPercent = AOC / np.sum(np.sum( areaWeights ));
+        
+            # Set topography in bathymetry variable to np.nan.
+            bathymetry[bathymetry>=0] = np.nan;
+
+            return bathymetry
+
+
+        def waterVolumeMethod(self, topography, basinVolume, verbose=True):
+            """
+            waterVolumeMethod method is use to calculate and define bathymetry as the
+            topography flooded until the oceans contain some input value of ocean
+            water, in m3.
+
+
+            Parameters
+            ----------
+            topography : NUMPY ARRAY
+                nx2n array representing cell registered topography, in m.
+            basinVolume : DICTIONARY
+                Option to define bathymetry by flooding topography with
+                basinVolume['uncompactedVol'] amount of ocean water, in m3.
+            areaWeights : NUMPY ARRAY
+                An array of global degree to area weights. The size is dependent on
+                input resolution. The sum of the array equals 4 pi radius^2 for 
+                sufficiently high resolution.
+            verbose : BOOLEAN, optional
+                Reports more information about process. The default is True.
+
+            Returns
+            -------
+            bathymetry : NUMPY ARRAY
+                nx2n array representing seafloor depth, in m, with positive values.
+                Bathymetry is define by the method of this function. Any areas above
+                sea-level are assigned a value of np.nan.
+            """
+            # Iterate flooding (meter-by-meter) until the desired amount of ocean
+            # volume produced.
+            VOC = 0;
+            deepestSeafloor = 0;
+            while VOC < basinVolume['uncompactedVol']:
+                # Add 1 meter of flooding
+                deepestSeafloor += 1;
+                bathymetry = topography-deepestSeafloor;
+                # Do isostatic compensation calculation for ocean loading
+                if self.isostaticCompensation['on']:
+                    bathymetry = self.isostaticCompensationMethod(bathymetry);
+                # Calculate basin volume, in m3.
+                VOC = np.sum(np.sum( bathymetry[bathymetry<0]*areaWeights[bathymetry<0] ))
+
+            # Set topography in bathymetry variable to np.nan.
+            bathymetry[bathymetry>=0] = np.nan; 
+
+            return bathymetry            
+
+        def isostaticCompensationMethod(topography,  , loadingProp, lithosphereProp):
+            """
+            isostaticCompensationMethod is a method used to recalculate bathymetry
+            due to the loading of lithosphere.
+
+            topography : NUMPY ARRAY
+                nx2n array representing cell registered topography, in m. Note
+                that there should be some bathymetry (represented with negative
+                values in the topography array).
+            loadingProp : Dictionary
+                A dictionary of loading material properties. This should include the
+                following properties
+                    'uniformDensity' : loading material density, in kg/m3
+            lithosphereProp : DICTIONARY
+                A dictionary representing loaded lithosphere properties. 
+
+            
+            Returns
+            -------
+            bathymetry : NUMPY ARRAY
+                nx2n array representing seafloor depth, in m, with negative values,
+                and topography with positive values.
+
+
+
+
+
+
+
+            1. Might be useful for flexural Isostasy:
+                https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017JB014571
+                https://pages.uoregon.edu/rdorsey/BasinAnalysis/AngevineEtal1990/Chapt%205%20Flexure.pdf
+            2. Might be useful for the Isostasy
+                https://agupubs.onlinelibrary.wiley.com/doi/full/10.1002/2017GL073334
+
+
+            """
+            print("working progress")
+
+
+    def saveBathymetry(self, data_dir, verbose = False):
+        """
+        create_file_structure creates new directories from a provided list
+        of directories.
+
+        Parameters
+        ----------
+        data_dir : STRING
+            A directory which you store local data within. Note that this
+            function will download directories [data_dir]/topographies
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+
+        Returns
+        -------
+        None.
+        
+        """
+        # Save bathymetry netcdf
+
+        # Save bathymetry parameters
+        # AOC, VOC, highlatlat, hb10 = highlatA/VOC, bathymetry distributions (w/ and w/o high latitude)
+
+
+        
+
+class BathyRecon():
+    '''
+    Used for analogs of planets with active plate tectonics (using Earth reconstructions as proxy).
+    '''
+
+    def __init__(self):
+        self.x = 1;
+
+
+class BathySynthetic():
+    '''
+    Bathy calculated with from mantle convection models / statistical analysis of planetary topography.
+    '''
+
+    def __init__(self):
+        self.x = 1;
+
+
+
+
+#######################################################################
+############# ExoCcycle Calculate Ccycle Bathymetry Params ############
+#######################################################################
+# Define some methods to calculate bathymetry attributes from 
+def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True):
+    """
+    calculateHighLatA is a function used to calculate the high latitude 
+    region of an input bathymetry model.
+
+    Parameters
+    ----------
+    bathymetry : NUMPY ARRAY
+        nx2n array representing seafloor depth, in m, with positive values.
+    latitudes : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    areaWeights : NUMPY ARRAY
+        An array of global degree to area weights. The size is dependent on
+        input resolution. The sum of the array equals 4 pi radius^2 for 
+        sufficiently high resolution.
+    highlatP : FLOAT
+        Value representing the amount of ocean surface area, in decimal percent,
+        that should be included in the high latitude box.
+    verbose : BOOLEAN, optional
+        Reports more information about process. The default is True.
+
+    Return
+    -------
+    self.highlatA : FLOAT
+        Total high latitude area, in m2. Note that this is not the hb[10]
+        value in the LOSCAR earth system model. self.highlatP is hb[10].
+    self.highlatlat : FLOAT
+        The lowest latitude of the high latitude cutoff, in degree.    
+    """
+
+    # Calculate the total seafloor area (AOC)
+    AOC = np.sum(np.sum( areaWeights[bathymetry<0] ));
+
+    # Check that high latitude box is at most 100 % of the ocean
+    if highlatP > 1.0:
+        print("The high latitude box was defined to be too large (i.e., it is greater than the size of the ocean). Change self.highlatP.")
+        return
+
+    # Iterate until percentArea reaches at least the size of the 
+    # high latitude box in precent area, self.highlatP.
+    highlatlat = 90;
+    while (percentArea < highlatP) and not (highlatlat == 0):
+        highlatlat -= .1;
+        percentArea = np.sum(np.sum( areaWeights[latitudes>highlatlat] ))/AOC;
+
+    # Define bathymetry parameter
+    highlatA = np.sum(np.sum( areaWeights[latitudes>highlatlat] ));
+
+    # Report
+    if verbose:
+        print("The input high latitude area should cover {:2.0f}% of seafloor area.".format(highlatP));
+        print("The high latitude cutoff is {:2.1f} degrees.".format(highlatlat));
+        print("The high latitude area is {:2.0f} m2.".format(highlatA));
+
+    return highlatlat, highlatA
+
+
+def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeights, bins=np.array[(0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5)], verbose=True):
+    """
+    calculateBathymetryDistribution function calculates the bathymetry 
+    distribution of a global or basin (depending on input) bathymetry
+    model. These distrbutions can be useful as inputs for carbon cycle
+    models.
+
+
+    Parameters
+    ----------
+    bathymetry : NUMPY ARRAY
+        nx2n array representing seafloor depth, in m, with positive values.
+    latitudes : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    highlatlat : FLOAT
+        The lowest latitude of the high latitude cutoff, in degree.
+    areaWeights : NUMPY ARRAY
+        An array of global degree to area weights. The size is dependent on
+        input resolution. The sum of the array equals 4 pi radius^2 for 
+        sufficiently high resolution.
+    bins : NUMPY LIST
+        A numpy list of bin edges, in km, to calculate the bathymetry distribution
+        over. Note that anything deeper than the last bin edge will be defined within
+        the last bin. The default is
+        np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]).
+    verbose : BOOLEAN, optional
+        Reports more information about process. The default is True.
+
+    Define
+    -------
+    self.bathymetryAreaDist : NUMPY LIST
+        A histogram of seafloor bathymetry with using the following bin edges:
+        0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+        that this distribution is calculated with the exclusion of high latitude
+        distribution of seafloor depths. This is what is normally inputted into
+        the LOSCAR carbon cycle model.
+    self.bathymetryAreaDist_wHighlat : NUMPY LIST
+        This is the same as bathymetryAreaDist, but includes the high latitude
+        seafloor distribution of seafloor depths.
+    
+    Return
+    -------
+    None.
+    """
+    # Calculate bathymetry distribution of global bathymetry (including high
+    # latitude areas).
+    bathymetryAreaDist_wHighlat = 100*np.histogram(bathymetry, bins=bins, density=True, weights=areaWeights);
+
+    # Calculate bathymetry distribution of global bathymetry (excluding high
+    # latitude areas).
+    bathymetryAreaDist = 100*np.histogram(bathymetry[latitudes<=highlatlat], bins=bins, density=True, weights=areaWeights[latitudes<=highlatlat]);
+
+    # Report
+    if verbose:
+        print("Bathymetry area distribution including high latitude bathymetry:\n",bathymetryAreaDist_wHighlat);
+        print("Bathymetry area distribution excluding high latitude bathymetry:\n",bathymetryAreaDist);
+
+    return bathymetryAreaDist, bathymetryAreaDist_wHighlat
+
+#######################################################################
+############## ExoCcycle Define Ccycle Bathymetry Params ##############
+#######################################################################
+class CalculateLOSCARParam():
+    '''
+    CalculateLOSCARParam class is used to calculate bathymetry parameters used within the LOSCAR
+    carbon cycle model.
+    '''
+
+    def __init__(self):
+        self.x = 1;
