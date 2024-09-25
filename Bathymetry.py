@@ -329,7 +329,7 @@ class BathyMeasured():
                 self.elev_netcdf = np.roll(self.elev_netcdf, columns+1);
             
             # Create grid to interpolate to
-            self.lon, self.lat = np.meshgrid(np.arange(-180+new_resolution/2, 180-new_resolution/2, new_resolution), np.arange(90-new_resolution/2, -90, -new_resolution) )
+            self.lon, self.lat = np.meshgrid(np.arange(-180+new_resolution/2, 180+new_resolution/2, new_resolution), np.arange(90-new_resolution/2, -90-new_resolution/2, -new_resolution) )
 
             # Interpolate new latitude/longitude/elevation
             if verbose:
@@ -430,48 +430,8 @@ class BathyMeasured():
         None.
         """
 
-        # Show options chosen for bathymetry model creation
-        methodChoice = None;
-        methodChoice
-        if basinVolume['on']:
-            methodChoice = "basin volume constraint";
-        if oceanArea['on']:
-            if methodChoice is None:
-                methodChoice = "basin area constraint";
-            else:
-                print("{} was also chosen. Using {}.".format(methodChoice));
-
-        
-        # Define degree to area weights
-        areaWeights = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
-
-        # Define initial bathymetry model with minimum elevation set to 0 m (sea-level)
-        # Note that topography represents values above sea-level with positive values.
-        topography = self.elev - np.min(np.min(self.elev));
-
-        # Feed bathymetry initial model into selected bathymetry calculation function. 
-        if methodChoice == "basin volume constraint":
-            bathymetry = self.waterVolumeMethod(topography, oceanArea, areaWeights, verbose = False)
-        elif methodChoice == "basin area constraint":
-            bathymetry = self.oceanAreaMethod(topography, basinVolume, areaWeights, verbose = False)
-
-        # Calculate and define properties of bathymetry model
-        self.bathymetry = bathymetry;
-        self.AOC = np.sum(np.sum( areaWeights[self.bathymetry<0] ))
-        self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[self.bathymetry<0] ))
-        
-        ## Sets self.highlatA and self.highlatlat
-        self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
-
-        ## Define global distribution of sea seafloor depths
-        ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
-        ## are define here.
-        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat = calculateBathymetryDistribution(self.bathymetry, areaWeights, self.highlatlat);
-
-
         # Define methods for creating bathymetry models.
-
-        def oceanAreaMethod(self, topography, oceanArea, areaWeights, verbose=True):
+        def oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose=True):
             """
             oceanAreaMethod method is use to calculate and define bathymetry as the
             topography flooded until the oceans cover some decimal percentage of 
@@ -490,6 +450,10 @@ class BathyMeasured():
                 An array of global degree to area weights. The size is dependent on
                 input resolution. The sum of the array equals 4 pi radius^2 for 
                 sufficiently high resolution.
+            isostaticCompensation : DICTIONARY
+                An option to apply isostatic compensation to for ocean loading
+                on the topography. Option assumes a uniform physical properties
+                of the lithosphere.
             verbose : BOOLEAN, optional
                 Reports more information about process. The default is True.
 
@@ -509,8 +473,8 @@ class BathyMeasured():
                 deepestSeafloor += 1;
                 bathymetry = topography-deepestSeafloor;
                 # Do isostatic compensation calculation for ocean loading
-                if self.isostaticCompensation['on']:
-                    bathymetry = self.isostaticCompensationMethod(bathymetry);
+                if isostaticCompensation['on']:
+                    bathymetry = isostaticCompensationMethod(bathymetry);
                 # Calculate ocean area, in m2.
                 AOC = np.sum(np.sum( areaWeights[bathymetry<0] ))
                 # Calculate ocean area, in decimal percent.
@@ -519,10 +483,10 @@ class BathyMeasured():
             # Set topography in bathymetry variable to np.nan.
             bathymetry[bathymetry>=0] = np.nan;
 
-            return bathymetry
+            return np.abs(bathymetry)
 
 
-        def waterVolumeMethod(self, topography, basinVolume, verbose=True):
+        def waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose=True):
             """
             waterVolumeMethod method is use to calculate and define bathymetry as the
             topography flooded until the oceans contain some input value of ocean
@@ -540,6 +504,10 @@ class BathyMeasured():
                 An array of global degree to area weights. The size is dependent on
                 input resolution. The sum of the array equals 4 pi radius^2 for 
                 sufficiently high resolution.
+            isostaticCompensation : DICTIONARY
+                An option to apply isostatic compensation to for ocean loading
+                on the topography. Option assumes a uniform physical properties
+                of the lithosphere.
             verbose : BOOLEAN, optional
                 Reports more information about process. The default is True.
 
@@ -559,17 +527,17 @@ class BathyMeasured():
                 deepestSeafloor += 1;
                 bathymetry = topography-deepestSeafloor;
                 # Do isostatic compensation calculation for ocean loading
-                if self.isostaticCompensation['on']:
-                    bathymetry = self.isostaticCompensationMethod(bathymetry);
+                if isostaticCompensation['on']:
+                    bathymetry = isostaticCompensationMethod(bathymetry);
                 # Calculate basin volume, in m3.
                 VOC = np.sum(np.sum( bathymetry[bathymetry<0]*areaWeights[bathymetry<0] ))
 
             # Set topography in bathymetry variable to np.nan.
             bathymetry[bathymetry>=0] = np.nan; 
 
-            return bathymetry            
+            return np.abs(bathymetry)            
 
-        def isostaticCompensationMethod(topography,  , loadingProp, lithosphereProp):
+        def isostaticCompensationMethod(topography,  loadingProp, lithosphereProp):
             """
             isostaticCompensationMethod is a method used to recalculate bathymetry
             due to the loading of lithosphere.
@@ -608,6 +576,48 @@ class BathyMeasured():
             """
             print("working progress")
 
+        # Show options chosen for bathymetry model creation
+        methodChoice = None;
+        methodChoice
+        if basinVolume['on']:
+            methodChoice = "basin volume constraint";
+        if oceanArea['on']:
+            if methodChoice is None:
+                methodChoice = "basin area constraint";
+            else:
+                print("{} was also chosen. Using {}.".format(methodChoice));
+
+        
+        # Define degree to area weights
+        areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+
+        # Define initial bathymetry model with minimum elevation set to 0 m (sea-level)
+        # Note that topography represents values above sea-level with positive values.
+        topography = self.elev - np.min(np.min(self.elev));
+
+        # Feed bathymetry initial model into selected bathymetry calculation function. 
+        if methodChoice == "basin volume constraint":
+            bathymetry = waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose = False)
+        elif methodChoice == "basin area constraint":
+            bathymetry = oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose = False)
+
+        # Calculate and define properties of bathymetry model
+        self.bathymetry = bathymetry;
+        self.AOC = np.sum(np.sum( areaWeights[self.bathymetry<0] ))
+        self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[self.bathymetry<0] ))
+        
+        ## Sets self.highlatA and self.highlatlat
+        self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
+
+        ## Define global distribution of sea seafloor depths
+        ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
+        ## are define here.
+        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat = calculateBathymetryDistribution(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
+
+
+
+
+
 
     def saveBathymetry(self, data_dir, verbose = False):
         """
@@ -630,8 +640,23 @@ class BathyMeasured():
         """
         # Save bathymetry netcdf
 
+        # Calculate and define properties of bathymetry model
+        self.bathymetry        
+
         # Save bathymetry parameters
         # AOC, VOC, highlatlat, hb10 = highlatA/VOC, bathymetry distributions (w/ and w/o high latitude)
+        self.AOC
+        self.VOC
+        self.highlatlat
+        self.highlatA
+
+        # Distributions
+        self.bathymetryAreaDist
+        self.bathymetryAreaDist_wHighlat
+
+
+
+        # 
 
 
         
@@ -690,9 +715,8 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     self.highlatlat : FLOAT
         The lowest latitude of the high latitude cutoff, in degree.    
     """
-
     # Calculate the total seafloor area (AOC)
-    AOC = np.sum(np.sum( areaWeights[bathymetry<0] ));
+    AOC = np.nansum(np.nansum( areaWeights[np.isnan(bathymetry)] ));
 
     # Check that high latitude box is at most 100 % of the ocean
     if highlatP > 1.0:
@@ -702,9 +726,10 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     # Iterate until percentArea reaches at least the size of the 
     # high latitude box in precent area, self.highlatP.
     highlatlat = 90;
+    percentArea = 0;
     while (percentArea < highlatP) and not (highlatlat == 0):
         highlatlat -= .1;
-        percentArea = np.sum(np.sum( areaWeights[latitudes>highlatlat] ))/AOC;
+        percentArea = np.nansum(np.nansum( areaWeights[latitudes>highlatlat] ))/AOC;
 
     # Define bathymetry parameter
     highlatA = np.sum(np.sum( areaWeights[latitudes>highlatlat] ));
@@ -718,7 +743,7 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     return highlatlat, highlatA
 
 
-def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeights, bins=np.array[(0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5)], verbose=True):
+def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeights, binEdges=None, verbose=True):
     """
     calculateBathymetryDistribution function calculates the bathymetry 
     distribution of a global or basin (depending on input) bathymetry
@@ -739,11 +764,12 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
         An array of global degree to area weights. The size is dependent on
         input resolution. The sum of the array equals 4 pi radius^2 for 
         sufficiently high resolution.
-    bins : NUMPY LIST
+    binEdges : NUMPY LIST
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
-        the last bin. The default is
-        np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]).
+        the last bin. The default is None, but this is modified to 
+        np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]) within
+        the code.
     verbose : BOOLEAN, optional
         Reports more information about process. The default is True.
 
@@ -763,18 +789,59 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
     -------
     None.
     """
+    # Set bins default array.
+    if binEdges is None:
+        binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
+
     # Calculate bathymetry distribution of global bathymetry (including high
     # latitude areas).
-    bathymetryAreaDist_wHighlat = 100*np.histogram(bathymetry, bins=bins, density=True, weights=areaWeights);
+    logical1 = ~np.isnan(bathymetry);
+    bathy1   = (1e-3)*bathymetry[logical1];
+    weights1 = areaWeights[logical1]/np.sum(areaWeights[logical1]);
+
+    bathymetryAreaDist_wHighlat, binEdges = np.histogram(bathy1, bins=binEdges, density=True, weights=weights1);
+    bathymetryAreaDist_wHighlat = 100*bathymetryAreaDist_wHighlat;
 
     # Calculate bathymetry distribution of global bathymetry (excluding high
     # latitude areas).
-    bathymetryAreaDist = 100*np.histogram(bathymetry[latitudes<=highlatlat], bins=bins, density=True, weights=areaWeights[latitudes<=highlatlat]);
+    logical2 = (latitudes<=highlatlat) & ~np.isnan(bathymetry);
+    bathy2   = (1e-3)*bathymetry[logical2];
+    weights2 = areaWeights[logical2]/np.sum(areaWeights[logical2]);
+
+    bathymetryAreaDist, binEdges = np.histogram(bathy2, bins=binEdges, density=True, weights=weights2);
+    bathymetryAreaDist = 100*bathymetryAreaDist;
 
     # Report
     if verbose:
+        print("Bin edges used:\n", binEdges)
         print("Bathymetry area distribution including high latitude bathymetry:\n",bathymetryAreaDist_wHighlat);
         print("Bathymetry area distribution excluding high latitude bathymetry:\n",bathymetryAreaDist);
+
+        fig = plt.figure(figsize=(8,4))
+
+        factor1 = .2
+        factor2 = .25
+        plt.bar(x=binEdges[1:]-(factor2/2)*np.diff(binEdges),
+                height=bathymetryAreaDist_wHighlat,
+                width=factor1*np.diff(binEdges),
+                label= "All bathymetry")
+        plt.bar(x=binEdges[1:]+(factor2/2)*np.diff(binEdges),
+                height=bathymetryAreaDist,
+                width=factor1*np.diff(binEdges),
+                label= "Removed high latitude bathymetry: {:2.1f} degrees".format(highlatlat))
+        # ticks
+        plt.xticks(binEdges[1:]);
+        plt.yticks(np.arange(0,110,10));
+
+        # Labels
+        plt.legend();
+        plt.title("Planet's Bathymetry Distribution")
+        plt.xlabel("Bathymetry Bins [km]");
+        plt.ylabel("Seafloor Area [%]");
+
+        # figure format
+        plt.gca().spines['top'].set_visible(False)
+        plt.gca().spines['right'].set_visible(False)
 
     return bathymetryAreaDist, bathymetryAreaDist_wHighlat
 
