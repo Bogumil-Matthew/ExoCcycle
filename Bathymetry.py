@@ -429,8 +429,8 @@ class BathyMeasured():
         self.VOC : FLOAT
             Total basin volume, in m3.
         self.highlatA : FLOAT
-            Total high latitude area, in m2. Note that this is not the hb[10] value
-            in the LOSCAR earth system model. self.highlatP is hb[10].
+            Total high latitude ocean area, in m2. Note that this is not the
+            hb[10] value in the LOSCAR earth system model. self.highlatP is hb[10].
         self.highlatlat : FLOAT
             The lowest latitude of the high latitude cut off, in degree.
         self.areaWeights : NUMPY ARRAY
@@ -639,11 +639,60 @@ class BathyMeasured():
 
 
 
-    def saveBathymetry(self, verbose = False):
+    def saveBathymetry(self, verbose = True):
         """
         saveBathymetry is a method used to save bathymetry models
-        created with setSeaLevel.
+        created with setSeaLevel. Note that models will be saved
+        under the same root folder that was supplied to the readTopo(...)
+        method.
 
+        Dimensions are as follows:
+
+        lat     : latitude in degrees, ranging from -180,180.
+        lon     : longitude in degrees, ranging from -90,90.
+        binEdges: upper bound bin edges for bathymetry distributions, in km.
+
+        Values saved to the output netCDF4 are as follows:
+
+        bathymetry : NUMPY ARRAY
+            nx2n array representing seafloor depth, in m, with
+            negative values, and topography with positive values.
+        lat : NUMPY VECTOR
+            A vector of cell-registered latitudes range the entire
+            planets surface, -90,90 degrees.
+        lon : NUMPY VECTOR
+            A vector of cell-registered longitudes range the entire
+            planets surface, -180,180 degrees.
+        areaWeights : NUMPY VECTOR
+            An array of global degree to area weights. The size is dependent on
+            input resolution. The sum of the array equals 4 pi radius^2 for 
+            sufficiently high resolution.
+        binEdges : NUMPY VECTOR
+            A numpy list of bin edges, in km, used in calculating
+            the bathymetry distribution. Note that 1) anything deeper
+            than the last bin edge will be defined within the last
+            bin and 2) the first bin edge corresponds to the first
+            non-zero bin edge.
+        bathymetry-distribution-G : NUMPY LIST
+            A histogram of seafloor bathymetry within binEdges bins.
+            Note that this distribution is calculated with the exclusion
+            of high latitude distribution of seafloor depths. This is
+            what is normally inputted into the LOSCAR carbon cycle model.
+        bathymetry-distribution-whighlat-G : NUMPY LIST
+            This is the same as bathymetry-distribution-G, but includes
+            the high latitude seafloor distribution of seafloor depths.
+        highlatA : FLOAT
+            Total high latitude ocean area, in m2. Note that this is
+            not the hb[10] value in the LOSCAR earth system model.
+        highlatlat : FLOAT
+            The lowest latitude of the high latitude cutoff, in degree.
+            This value is define by the constraint that some (user define
+            portion of the ocean surface should be within a high latitude
+            ocean basin, faciliating ocean turnover in carbon cycle models).
+        AOC : FLOAT
+            Total sea surface area, in m2.
+        VOC : FLOAT
+            Total basin volume, in m3.
 
         Parameters
         ----------
@@ -796,8 +845,9 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     Return
     -------
     self.highlatA : FLOAT
-        Total high latitude area, in m2. Note that this is not the hb[10]
-        value in the LOSCAR earth system model. self.highlatP is hb[10].
+        Total high latitude ocean area, in m2. Note that this is not
+        the hb[10] value in the LOSCAR earth system model. self.highlatP
+        is hb[10].
     self.highlatlat : FLOAT
         The lowest latitude of the high latitude cutoff, in degree.    
     """
