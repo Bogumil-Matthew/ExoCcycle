@@ -12,6 +12,9 @@ Created on Tue Sep  6 15:20:00 2024
 #######################################################################
 import os
 import numpy as np
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs # type: ignore
+
 from ExoCcycle import Bathymetry # type: ignore
 
 
@@ -164,16 +167,18 @@ def cellAreaOnSphere(clat, resolution = 1., radius=6371e3):
     """
     Calculate the area of a polygon on a sphere using spherical excess formula.
     
-    Parameters:
-        clat : FLOAT
-            Center latitude value, in degrees.
-        resolution : FLOATlatitudes
-            Resolution of cell, in degrees.
-        radius : FLOAT
-            Radius of the sphere.
+    Parameters
+    ----------
+    clat : FLOAT
+        Center latitude value, in degrees.
+    resolution : FLOATlatitudes
+        Resolution of cell, in degrees.
+    radius : FLOAT
+        Radius of the sphere.
         
-    Returns:
-        float: Area of the polygon on the sphere in square kilometers.
+    Returns
+    -------
+    float: Area of the polygon on the sphere in square kilometers.
     """
     deltaLat = np.deg2rad(resolution);
     detlaLon = np.deg2rad(resolution);
@@ -182,6 +187,79 @@ def cellAreaOnSphere(clat, resolution = 1., radius=6371e3):
 
     return area
 
+#######################################################################
+################ Plotting function, might not be used #################
+#######################################################################
+
+def plotGlobal(lat, lon, values,
+               outputDir = os.getcwd(),
+               fidName = "plotGlobal.png",
+               cmapOpts={"cmap":"viridis",
+                         "cbar-title":"cbar-title",
+                         "cbar-range":[0,1]},
+               pltOpts={"valueType": "Bathymetry",
+                        "valueUnits": "m",
+                        "plotTitle":"",
+                        "plotZeroContour":False},
+               saveSVG=False,
+               savePNG=False):
+    """
+    plotGlobal function is used to plot global ranging datasets that
+    are represented with evenly spaced latitude and longitude values.
+
+    Parameters
+    ----------
+    lat : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    lon : NUMPY ARRAY
+        nx2n array representing cell registered longitudes, in deg,
+        ranging from [-180, 180]. Longitudes change from column to column.
+    Values : NUMPY ARRAY
+        nx2n array representing cell registered geographic data, in [-] units.
+    cmapOpts : DICTIONARY
+        A set of options to format the color map and bar for the plot
+    pltOpts : DICTIONARY
+        A set of options to format the plot
+    saveSVG : BOOLEAN
+        An option to save an SVG output. The default is False.
+    savePNG : BOOLEAN
+        An option to save an PNG output. The default is False.
+
+    Returns
+    -------
+    None.
+    """
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=ccrs.Mollweide())
+
+    ## Add the plot using pcolormesh
+    mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"])
+    if pltOpts["plotZeroContour"]:
+        # Set any np.nan values to 0.
+        values[np.isnan(values)] = 0;
+        zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+    ## Add a colorbar
+    cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+    cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+    cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    ax.gridlines()
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=600)
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
 
 
 

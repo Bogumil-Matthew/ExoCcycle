@@ -97,9 +97,6 @@ class BathyMeasured():
             else:
                 print('Chosen a implemented body. Define input body as "Venus" | "Earth" | "Mars" | "Moon"');
 
-
-
-    
     def getTopo(self, data_dir, verbose=True):
         """
         getTopo is a meethod used to download solar system topography
@@ -268,22 +265,16 @@ class BathyMeasured():
                 print((self.lon));
                 print((self.lat));
                 print((self.elev));
-                
-            plt.figure(figsize=(8, 6))
-            contour = plt.contourf(self.lon,self.lat,self.elev)
-            plt.xlabel("Longitude [deg]")
-            plt.ylabel("Latitude [deg]")
-            plt.title("{} resampled at {:0.0f} degree resolution".format(self.model, new_resolution))
-            plt.clim(np.min(self.elev), np.max(self.elev))  # Set the colorbar range
-
-
-            # Add a horizontal colorbar with specified range
-            cbar = plt.colorbar(contour, orientation='horizontal')
-            cbar.set_label('Topography [m]')  # Customize the colorbar label
             
-
-            plt.savefig("{}/topographies/{}/{}_resampled_{:0.0f}deg.png".format(data_dir, self.model, self.model, new_resolution), dpi=600)
-
+            # Plot global topography model
+            utils.plotGlobal(self.lat, self.lon, self.elev,
+                             cmapOpts={"cmap":"viridis",
+                                       "cbar-title":"cbar-title",
+                                       "cbar-range":[np.min(np.min(self.elev)),np.max(np.max(self.elev))]},
+                             pltOpts={"valueType": "Topography",
+                                      "valueUnits": "m",
+                                      "plotTitle":"{} resampled at {:0.0f} degree resolution".format(self.model, new_resolution),
+                                      "plotZeroContour":False})
             # return
             return
         
