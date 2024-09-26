@@ -690,7 +690,6 @@ class BathyMeasured():
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
-
         Returns
         -------
         None.
@@ -783,6 +782,28 @@ class BathyMeasured():
 
         # Close the netcdf
         ncfile.close();
+
+    def readBathymetry(self, verbose = True):
+        """
+        readBathymetry is a method used to read bathymetry models
+        created that are written with the readBathymetry method. 
+
+
+        Parameters
+        ----------
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Returns
+        -------
+        None.
+
+        """
+
+        BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        
+        # Make new .nc file
+        self.bathync = Dataset(BathyPath, mode='r', format='NETCDF4_CLASSIC') 
 
 
         
