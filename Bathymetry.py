@@ -230,13 +230,23 @@ class BathyMeasured():
         self.lat : NUMPY ARRAY
             nx2n array representing cell registered latitudes, in deg,
             ranging from [-90, 90]. Latitudes change from row to row.
-
+        self.resolution : INT
+            The resolution, in degrees, of the output topography. Note
+            that this value is set to the new_resolution input value.
+        self.data_dir : STRING
+            A directory which you store local data within.
 
         Returns
         -------
         None.
 
         """
+        # Set the object's resolution for topography/bathymetry calculations
+        self.resolution = new_resolution;
+
+        # Set the location of data storage
+        self.data_dir = data_dir;
+
         # Define the resampled topography output file name.
         resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.0f}deg.nc".format(data_dir,  self.model, new_resolution);
 
@@ -366,7 +376,7 @@ class BathyMeasured():
             elev.standard_name = 'elevation'
             
             # Format
-            ncfile.title='{} Topography resampled at {:0.0f}deg'.format(self.model, new_resolution)
+            ncfile.title='{} Topography resampled at {:0.0f} degrees.'.format(self.model, new_resolution)
 
             # Populate the variables
             lat[:]  = self.lat[:,0];
@@ -423,7 +433,14 @@ class BathyMeasured():
             in the LOSCAR earth system model. self.highlatP is hb[10].
         self.highlatlat : FLOAT
             The lowest latitude of the high latitude cut off, in degree.
-
+        self.areaWeights : NUMPY ARRAY
+            An array of global degree to area weights. The size is dependent on
+            input resolution. The sum of the array equals 4 pi radius^2 for 
+            sufficiently high resolution.
+        self.binEdges : NUMPY ARRAY
+            A numpy list of bin edges, in km, to calculate the bathymetry distribution
+            over. Note that anything deeper than the last bin edge will be defined within
+            the last bin.
 
         Returns
         -------
@@ -523,14 +540,16 @@ class BathyMeasured():
             VOC = 0;
             deepestSeafloor = 0;
             while VOC < basinVolume['uncompactedVol']:
-                # Add 1 meter of flooding
-                deepestSeafloor += 1;
+                # Add 10 meter of flooding
+                deepestSeafloor += 10;
                 bathymetry = topography-deepestSeafloor;
                 # Do isostatic compensation calculation for ocean loading
                 if isostaticCompensation['on']:
                     bathymetry = isostaticCompensationMethod(bathymetry);
                 # Calculate basin volume, in m3.
-                VOC = np.sum(np.sum( bathymetry[bathymetry<0]*areaWeights[bathymetry<0] ))
+                VOC = np.abs( np.sum(np.sum( bathymetry[bathymetry<0]*areaWeights[bathymetry<0] )) );
+                if verbose:
+                    print("Deepest seafloor is {0:2.0f} m with total basin volume of {1:2.2e} m3".format(deepestSeafloor, VOC))
 
             # Set topography in bathymetry variable to np.nan.
             bathymetry[bathymetry>=0] = np.nan; 
@@ -590,6 +609,7 @@ class BathyMeasured():
         
         # Define degree to area weights
         areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+        self.areaWeights = areaWeights;
 
         # Define initial bathymetry model with minimum elevation set to 0 m (sea-level)
         # Note that topography represents values above sea-level with positive values.
@@ -603,8 +623,8 @@ class BathyMeasured():
 
         # Calculate and define properties of bathymetry model
         self.bathymetry = bathymetry;
-        self.AOC = np.sum(np.sum( areaWeights[self.bathymetry<0] ))
-        self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[self.bathymetry<0] ))
+        self.AOC = np.nansum(np.nansum( areaWeights[~np.isnan(self.bathymetry)] ))
+        self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[~np.isnan(self.bathymetry)] ))
         
         ## Sets self.highlatA and self.highlatlat
         self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
@@ -612,23 +632,21 @@ class BathyMeasured():
         ## Define global distribution of sea seafloor depths
         ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
         ## are define here.
-        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat = calculateBathymetryDistribution(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
+        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistribution(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
 
 
 
 
 
 
-    def saveBathymetry(self, data_dir, verbose = False):
+    def saveBathymetry(self, verbose = False):
         """
-        create_file_structure creates new directories from a provided list
-        of directories.
+        saveBathymetry is a method used to save bathymetry models
+        created with setSeaLevel.
+
 
         Parameters
         ----------
-        data_dir : STRING
-            A directory which you store local data within. Note that this
-            function will download directories [data_dir]/topographies
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
@@ -638,25 +656,93 @@ class BathyMeasured():
         None.
         
         """
-        # Save bathymetry netcdf
+        # Make directory for storing bathymetry model(s)
+        utils.create_file_structure([self.data_dir+"/bathymetries",
+                                     self.data_dir+"/bathymetries/Earth",
+                                     self.data_dir+"/bathymetries/Venus",
+                                     self.data_dir+"/bathymetries/Mars",
+                                     self.data_dir+"/bathymetries/Moon"],
+                                     root = True,
+                                     verbose=verbose)     
+        
+        # Set netCDF4 filename
+        BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        
+        # Make new .nc file
+        ncfile = Dataset(BathyPath, mode='w', format='NETCDF4_CLASSIC') 
 
-        # Calculate and define properties of bathymetry model
-        self.bathymetry        
+        # Define dimension (latitude, longitude, and bathymetry distributions)
+        lat_dim = ncfile.createDimension('lat', len(self.bathymetry[:,0]));     # latitude axis
+        lon_dim = ncfile.createDimension('lon', len(self.bathymetry[0,:]));     # longitude axis
+        binEdges_dim = ncfile.createDimension('binEdges', len(self.binEdges[1:]));      # distribution
+        
+        # Define lat/lon with the same names as dimensions to make variables.
+        lat = ncfile.createVariable('lat', np.float32, ('lat',));
+        lat.units = 'degrees_north'; lat.long_name = 'latitude';
+        lon = ncfile.createVariable('lon', np.float32, ('lon',));
+        lon.units = 'degrees_east'; lon.long_name = 'longitude';
 
-        # Save bathymetry parameters
-        # AOC, VOC, highlatlat, hb10 = highlatA/VOC, bathymetry distributions (w/ and w/o high latitude)
-        self.AOC
-        self.VOC
-        self.highlatlat
-        self.highlatA
+        # Define a 2D variable to hold the elevation data
+        bathy = ncfile.createVariable('bathymetry',np.float64,('lat','lon'))
+        bathy.units = 'meters'
+        bathy.standard_name = 'bathymetry'
 
-        # Distributions
-        self.bathymetryAreaDist
-        self.bathymetryAreaDist_wHighlat
+        # Define vector as function with longitude dependence
+        areaWeights = ncfile.createVariable('areaWeights',np.float64,('lat',))
+        areaWeights.units = 'meters sq'
+        areaWeights.standard_name = 'areaWeights'
 
+        # Define variables for bathymetry distributions (vectors)
+        binEdges = ncfile.createVariable('binEdges', np.float32, ('binEdges',));
+        binEdges.units = 'km'; binEdges.long_name = 'km depth';
 
+        distribution_whighlat = ncfile.createVariable('bathymetry-distribution-whighlat-G', np.float64, ('binEdges',))
+        distribution_whighlat.units = 'kernal distribution'
+        distribution_whighlat.standard_name = 'bathymetry-distribution-whighlat-G'
 
-        # 
+        distribution = ncfile.createVariable('bathymetry-distribution-G', np.float64, ('binEdges',))
+        distribution.units = 'kernal distribution'
+        distribution.standard_name = 'bathymetry-distribution-G'
+
+        # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
+        highlatlat = ncfile.createVariable('highlatlat', None)
+        highlatlat.units = 'degrees'
+        highlatlat.standard_name = 'highlatlat'
+
+        highlatA = ncfile.createVariable('highlatA', None)
+        highlatA.units = 'meters sq'
+        highlatA.standard_name = 'highlatA'
+
+        VOC = ncfile.createVariable('VOC', None)
+        VOC.units = 'meters cubed'
+        VOC.standard_name = 'VOC'
+
+        AOC = ncfile.createVariable('AOC', None)
+        AOC.units = 'meters sq'
+        AOC.standard_name = 'AOC'
+        
+        # Format title
+        ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees.'.format(self.model, self.resolution)
+
+        # Populate the variables
+        lat[:]  = self.lat[:,0];
+        lon[:]  = self.lon[0,:];
+        bathy[:] = self.bathymetry;
+        areaWeights[:] = self.areaWeights[:,0];
+
+        # Add bathymetry distribution information
+        distribution_whighlat[:] = self.bathymetryAreaDist_wHighlat;
+        distribution[:] = self.bathymetryAreaDist;
+        binEdges[:] = self.binEdges[1:];
+
+        # Add attributes
+        highlatlat[:] = self.highlatlat;
+        highlatA[:] = self.highlatA;
+        VOC[:] = self.VOC;
+        AOC[:] = self.AOC;
+
+        # Close the netcdf
+        ncfile.close();
 
 
         
@@ -716,7 +802,7 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
         The lowest latitude of the high latitude cutoff, in degree.    
     """
     # Calculate the total seafloor area (AOC)
-    AOC = np.nansum(np.nansum( areaWeights[np.isnan(bathymetry)] ));
+    AOC = np.nansum(np.nansum( areaWeights[~np.isnan(bathymetry)] ));
 
     # Check that high latitude box is at most 100 % of the ocean
     if highlatP > 1.0:
@@ -843,7 +929,7 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
 
-    return bathymetryAreaDist, bathymetryAreaDist_wHighlat
+    return bathymetryAreaDist, bathymetryAreaDist_wHighlat, binEdges
 
 #######################################################################
 ############## ExoCcycle Define Ccycle Bathymetry Params ##############
