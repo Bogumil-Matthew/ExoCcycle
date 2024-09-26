@@ -238,7 +238,8 @@ def plotGlobal(lat, lon, values,
     ax = plt.axes(projection=ccrs.Mollweide())
 
     ## Add the plot using pcolormesh
-    mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"])
+    mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                         vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1])
     if pltOpts["plotZeroContour"]:
         # Set any np.nan values to 0.
         values[np.isnan(values)] = 0;

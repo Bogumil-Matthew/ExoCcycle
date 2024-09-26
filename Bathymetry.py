@@ -70,7 +70,7 @@ class BathyMeasured():
                 self.model = "Venus";
                 self.fidName = "topogrd.nc";
                 self.variables = {"lat":"lat", "lon":"lon", "elev":"elev"};
-                self.initiallykm = False;
+                self.initiallykm = True;
                 self.radiuskm = 6051.8;
                 self.highlatP = .10; # this is the hb[10] value from LOSCAR.
             elif body.lower() == "earth":
@@ -877,7 +877,7 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     percentArea = 0;
     while (percentArea < highlatP) and not (highlatlat == 0):
         highlatlat -= .1;
-        percentArea = np.nansum(np.nansum( areaWeights[latitudes>highlatlat] ))/AOC;
+        percentArea = np.nansum(np.nansum( areaWeights[np.abs(latitudes)>highlatlat] ))/AOC;
 
     # Define bathymetry parameter
     highlatA = np.sum(np.sum( areaWeights[latitudes>highlatlat] ));
@@ -947,17 +947,17 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
     bathy1   = (1e-3)*bathymetry[logical1];
     weights1 = areaWeights[logical1]/np.sum(areaWeights[logical1]);
 
-    bathymetryAreaDist_wHighlat, binEdges = np.histogram(bathy1, bins=binEdges, density=True, weights=weights1);
-    bathymetryAreaDist_wHighlat = 100*bathymetryAreaDist_wHighlat;
+    bathymetryAreaDist_wHighlat, binEdges = np.histogram(bathy1, bins=binEdges, weights=weights1);
+    bathymetryAreaDist_wHighlat = 100*(bathymetryAreaDist_wHighlat/np.sum(bathymetryAreaDist_wHighlat));
 
     # Calculate bathymetry distribution of global bathymetry (excluding high
     # latitude areas).
-    logical2 = (latitudes<=highlatlat) & ~np.isnan(bathymetry);
+    logical2 = (np.abs(latitudes)<=highlatlat) & ~np.isnan(bathymetry);
     bathy2   = (1e-3)*bathymetry[logical2];
     weights2 = areaWeights[logical2]/np.sum(areaWeights[logical2]);
 
-    bathymetryAreaDist, binEdges = np.histogram(bathy2, bins=binEdges, density=True, weights=weights2);
-    bathymetryAreaDist = 100*bathymetryAreaDist;
+    bathymetryAreaDist, binEdges = np.histogram(bathy2, bins=binEdges, weights=weights2);
+    bathymetryAreaDist = 100*(bathymetryAreaDist/np.sum(bathymetryAreaDist));
 
     # Report
     if verbose:
@@ -979,7 +979,7 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
                 label= "Removed high latitude bathymetry: {:2.1f} degrees".format(highlatlat))
         # ticks
         plt.xticks(binEdges[1:]);
-        plt.yticks(np.arange(0,110,10));
+        plt.yticks(np.arange(0,35,5));
 
         # Labels
         plt.legend();
