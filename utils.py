@@ -432,6 +432,7 @@ class Basins():
         self.nc.close();
 
     def defineBasins(self, minBasinCnt = 3,
+                     method = "Louvain",
                      reducedRes={"on":False,"factor":15},
                      read=False,
                      write=False,
@@ -445,6 +446,12 @@ class Basins():
         minBasinCnt : INT
             The minimum amount of basins the user chooses to define
             for the given bathymetry model input.
+        method : STRING
+            Determines the implemented community detection algorithm.
+            The options are either Girvan-Newman or Louvain. The former
+            is more robust with low scalability and the latter is practical
+            but produces non-deterministic communities. The default is
+            Louvain.
         reducedRes : DICTIONARY
             Option to reduce the resolution of the basin definition
             network calculation. Note that this should be turned
@@ -466,6 +473,10 @@ class Basins():
         self.basinDis : NUMPY ARRAY
             binCnt x basinCnt array of bathymetry distributions.
         
+            
+        FIXME: NEED TO MAKE SURE reduceRes and resolution are interacting
+        properly and not only for 1 degree resolution input bathymetry
+        models.
 
         """
 
@@ -521,7 +532,7 @@ class Basins():
             ######################
 
             # Define counter and point dictionary
-            cnt = 1
+            cnt = 0.
             points = {};
 
             # Define resolution
@@ -542,11 +553,13 @@ class Basins():
             # Distance, in degrees, to a diagonal node.
             cornerDis = reduceRes/np.sin(np.pi/4);
 
-            #for lati, loni in zip( lati, lon ):
+            # Create dictionary and array of bathymetry points
+            pos = np.zeros( (2, len(~np.isnan(bathymetryf))) );
             for i in tqdm( range(len(self.lonf)) ):
                 bathymetryi = bathymetryf[i];
                 if (~np.isnan(bathymetryi)):
-                    points[cnt] = (self.latf[i], self.lonf[i], bathymetryi);    # (latitude, longitude, depth) w/ units (deg, deg, m) 
+                    points[int(cnt)] = (self.latf[i], self.lonf[i], bathymetryi);    # (latitude, longitude, depth) w/ units (deg, deg, m)
+                    pos[:,int(cnt)] = np.array( [self.latf[i], self.lonf[i]] ); 
                     cnt+=1;
 
             # Create a graph
@@ -556,38 +569,194 @@ class Basins():
             for node, values in points.items():
                 G.add_node(node, pos=values[0:2], depth=values[2])
 
+            """
             # Add edges with weights based on geographic distance            
-            cnt = 1;
             for node1, values1 in tqdm(points.items()):
                 coords1 = values1[0:2];
                 for node2, values2 in points.items():
                     coords2 = values2[0:2];
                     if node1 != node2: # If the nodes are the same
                         
-                        # FIXME: Make sure hexPolylineLength is being implement to produce appropriate node connector weights
                         if (np.abs(points[node1][0]-points[node2][0])<cornerDis) & (np.abs(points[node1][1]-points[node2][1])<cornerDis):
                             # (Within cornerDis in latitude) & (Within cornerDis in longitude)
                             # If the nodes are adjacent seafloor node
-                            
 
                             # Calculate geographic distance between points using geodesic distance
-                            #distance = geodesic(coords1, coords2).km
-                            bathyAve= (values1[2]+values1[2])/2;
+                            bathyAve= (values1[2]+values2[2])/2;
                             hexsidelengnth = hexPolylineLength(coords1, coords2, verbose=False);
                             G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth)
                         elif (points[node1][1]==np.min(self.lonf)) & (np.abs(points[node1][0]-points[node2][0])<cornerDis) & (np.abs(points[node1][1]+points[node2][1])<cornerDis):
                             # (On left most boundary) & (Within cornerDis in latitude) & (Within cornerDis in longitude)
                             # If nodes are adjacent seafloor nodes and at a periodic boundary 
-                            bathyAve= (values1[2]+values1[2])/2;
+                            bathyAve= (values1[2]+values2[2])/2;
                             hexsidelengnth = hexPolylineLength(coords1, (points[node2][0], -1*points[node2][1]), verbose=False);
                             G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth)
+            """    
+
+            # Update to the above code block which Adds edges with weights based on geographic distance.
+            # This code is significantly faster than the above code block
+
+            ## Set bathymetry vector corresponding to node 
+            nodebathymetryf = ~np.isnan(bathymetryf);
+            nodeCntList = np.arange(0,len(pos[0,:]),1)
+
+            ## Iterate through each node
+            for node1, values1 in tqdm(points.items()):
+                # Set coordinates of current iterated node
+                coords1 = values1[0:2];
+
+                # Find values surrounding coords1 (current iterated node)
+                #coordsPotential = {}; cnt=0;
+                indices = [];
+                indicesAddPt = [];
+                # Set above and below coordinate 
+                if not (coords1[0] == np.max(self.latf)):
+                    # Not North pole node
+                    ## upper node
+                    condition = (pos.T==np.array( [coords1[0]+reduceRes, coords1[1]] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] )
+                    indicesAddPt.append(1)
+                if not (coords1[0] == np.min(self.latf)):
+                    # Not South pole node
+                    ## lower node
+                    condition = (pos.T==np.array( [coords1[0]-reduceRes, coords1[1]] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] )
+                    indicesAddPt.append(2)
+
+                # If on periodic boundary
+                if coords1[1] == np.min(self.lonf):
+                    # nodes on left (min) boundary
+                    if not (coords1[0] == np.max(self.latf)):
+                        # Not North pole node
+                        ## upper right node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, coords1[1]+reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] )
+                        ## upper left node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, np.max(self.lonf)] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] )
+                        indicesAddPt.append(3)
+                        indicesAddPt.append(3)
+                    if not (coords1[0] == np.min(self.latf)):
+                        # Not South pole node
+                        ## lower right node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, coords1[1]+reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] )
+                        ## lower left node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, np.max(self.lonf)] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] )
+                        indicesAddPt.append(4)
+                        indicesAddPt.append(4)
+                    ## right node
+                    condition = (pos.T==np.array( [coords1[0], coords1[1]+reduceRes] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] )
+                    ## left node
+                    condition = (pos.T==np.array( [coords1[0], np.max(self.lonf)] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] )
+                    indicesAddPt.append(5)
+                    indicesAddPt.append(5)
+
+                elif coords1[1] == np.max(self.lonf):
+                    # nodes on right (max) boundary
+                    if not (coords1[0] == np.max(self.latf)):
+                        # Not North pole node
+                        ## upper right node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, np.min(self.lonf)] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        ## upper left node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, coords1[1]-reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        indicesAddPt.append(6)
+                        indicesAddPt.append(6)
+                    if not (coords1[0] == np.min(self.latf)):
+                        # Not South pole node
+                        ## lower right node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, np.min(self.lonf)] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        ## lower left node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, coords1[1]-reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        indicesAddPt.append(7)
+                        indicesAddPt.append(7)
+                    ## right node
+                    condition = (pos.T==np.array( [coords1[0], np.min(self.lonf)] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] );
+                    ## left node
+                    condition = (pos.T==np.array( [coords1[0], coords1[1]-reduceRes] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] );
+                    indicesAddPt.append(8)
+                    indicesAddPt.append(8)
+
+                else:
+                    # Nodes not on boundary
+                    if not (coords1[0] == np.max(self.latf)):
+                        # Not North pole node
+                        ## upper right node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, coords1[1]+reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        ## upper left node
+                        condition = (pos.T==np.array( [coords1[0]+reduceRes, coords1[1]-reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        indicesAddPt.append(9)
+                        indicesAddPt.append(9)
+                    if not (coords1[0] == np.min(self.latf)):
+                        # Not South pole node
+                        ## lower right node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, coords1[1]+reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        ## lower left node
+                        condition = (pos.T==np.array( [coords1[0]-reduceRes, coords1[1]-reduceRes] ));
+                        condition = (condition[:,0]==True) & (condition[:,1]==True);
+                        indices.append( nodeCntList[condition] );
+                        indicesAddPt.append(10)
+                        indicesAddPt.append(10)
+                    ## right node
+                    condition = (pos.T==np.array( [coords1[0], coords1[1]+reduceRes] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] );
+                    ## left node
+                    condition = (pos.T==np.array( [coords1[0], coords1[1]-reduceRes] ));
+                    condition = (condition[:,0]==True) & (condition[:,1]==True);
+                    indices.append( nodeCntList[condition] );
+                    indicesAddPt.append(11)
+                    indicesAddPt.append(11)
+                    
+                for idx in indices:
+                    if not (idx.size == 0):
+                        # Set node, coordinates, and bathymetry value of current iterated edge node.
+                        node2 = idx[0];
+                        coords2 = G.nodes[node2]['pos'];
+                        values2 = G.nodes[node2]['depth'];
+                        
+                        # Calculate geographic distance between points using geodesic distance.
+                        bathyAve= (values1[2]+values2)/2;
+                        hexsidelengnth = hexPolylineLength(coords1, coords2, verbose=False);
+                        
+                        G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth);
+
 
 
             # Set some class parameters for testing purposes.
             self.G = G;
 
             # Find communities of nodes using the Girvan-Newman algorithm
-            self.findCommunities(minBasinCnt);
+            self.findCommunities(method = method, minBasinCnt = minBasinCnt);
 
             # Find nodes with high inbetweenness
             # FIXME:
@@ -627,21 +796,7 @@ class Basins():
                 plt.show()
 
 
-    def defineModularity(self):
-        """
-        FIXME:
-        
-        """
-        
-        self.modularity_df = pd.DataFrame(
-            [
-                [k + 1, nx.community.modularity(self.G, self.communities[k])]
-                for k in range(len(self.communities))
-            ],
-            columns=["k", "modularity"],
-        )
-
-    def findCommunities(self, minBasinCnt=1):
+    def findCommunities(self, method = "Louvain", minBasinCnt=1):
         """
         findCommunities uses the Girvan-Newman algorithm to determine
         communities of nodes (basins). Then nodes of similar basins
@@ -650,6 +805,12 @@ class Basins():
         
         Parameter
         ----------
+        method : STRING
+            Determines the implemented community detection algorithm.
+            The options are either Girvan-Newman or Louvain. The former
+            is more robust with low scalability and the latter is practical
+            but produces non-deterministic communities. The default is
+            Louvain.
         minBasinCnt : INT
             The minimum amount of basins the user chooses to define
             for the given bathymetry model input.
@@ -658,18 +819,22 @@ class Basins():
         ----------
         None.        
         """
-        # Run Girvan-Newman algorithm
-        self.communities = list(nx.community.girvan_newman(self.G));
 
-        # Choose interation of the algorithm that has at least
-        # minBasinCnt basins.
-        interation = 0;
-        while len(self.communities[interation]) < minBasinCnt:
-            interation+=1;
-        if interation > 0:
-            interation-1;
-        self.communitiesFinal = self.communities[interation];
+        if method=="Girvan-Newman":
+            # Run Girvan-Newman algorithm
+            self.communities = list(nx.community.girvan_newman(self.G));
 
+            # Choose interation of the algorithm that has at least
+            # minBasinCnt basins.
+            interation = 0;
+            while len(self.communities[interation]) < minBasinCnt:
+                interation+=1;
+            if interation > 0:
+                interation-1;
+            self.communitiesFinal = self.communities[interation];
+
+        else:
+            self.communitiesFinal = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=.1, threshold=1e-12, seed=1)
 
         # Set node attribute (basinIDs)
 
@@ -680,18 +845,19 @@ class Basins():
 
         basinIDs = {}; cnt = 0;
         for community in self.communitiesFinal:
-            basinIDi = basinIDTags[cnt];
+            basinIDi = float(basinIDTags[cnt]);
             for nodeID in community:
-                basinIDs[nodeID] = {"basinIDs": basinIDi};
+                basinIDs[nodeID] = {"basinID": basinIDi};
             cnt+=1;
-        nx.set_node_attributes(self.G, basinIDs, "basinIDs");
+        nx.set_node_attributes(self.G, basinIDs, "basinID");
 
 
 
-    def create_community_node_colors(self):
+    def createCommunityNodeColors(self):
         """
-        create_community_node_colors method sets colors associated
+        createCommunityNodeColors method sets colors associated
         with different community nodes (e.g., basins in this case).
+
 
         Returns
         ----------
@@ -700,20 +866,20 @@ class Basins():
             community.
         """
         # Define colors for basin identification.
-        colors = [mpl.colors.to_hex(i) for i in mpl.colormaps["Dark2"].colors][1:];
+        colors = [mpl.colors.to_hex(i) for i in mpl.colormaps["tab20"].colors][1:];
         node_colors = [];
 
         # Get basin IDs from network object.
-        tmpValues = nx.get_node_attributes(self.G, "basinIDs");
+        tmpValues = nx.get_node_attributes(self.G, "basinID");
 
         # Iterate through all bathymetry nodes.
-        for i in range(len(nx.get_node_attributes(self.G, "basinIDs"))):
-            basinIDi = int(tmpValues[i+1]["basinIDs"]);
+        for i in range(len(nx.get_node_attributes(self.G, "basinID"))):
+            basinIDi = int(tmpValues[i]["basinID"]);
             node_colors.append( colors[basinIDi] )
 
         return node_colors
 
-    def visualize_communities(self,
+    def visualizeCommunities(self,
                               cmapOpts={"cmap":"viridis",
                                         "cbar-title":"cbar-title",
                                         "cbar-range":[0,1]},
@@ -731,7 +897,7 @@ class Basins():
                               saveSVG=False,
                               savePNG=False):
         """
-        visualize_communities method creates a global map of nodes
+        visualizeCommunities method creates a global map of nodes
         and connectings. The nodes communities are defined with
         different colors.
 
@@ -755,13 +921,12 @@ class Basins():
         """
         # Make vector cooresponding to nodes that assigns each entry similar hex
         # color codes for similar community of nodes.
-        node_colors = self.create_community_node_colors()
+        node_colors = self.createCommunityNodeColors()
         
         # Plot the network on a geographic map
 
         ## Make figure
         fig = plt.figure(figsize=(8, 8))
-        #gs = GridSpec(1, 1, height_ratios=[3, 1]);  # 2 rows, 1 column, with the first row 3 times taller
         gs = GridSpec(1, 1, height_ratios=[1]);  # 1 rows, 1 column, 
 
         ## Add axis
@@ -783,12 +948,7 @@ class Basins():
         if draw['coastlines']:
             bathymetry[np.isnan(bathymetry)] = 0;
             zeroContour = ax.contour(self.lon, self.lat, bathymetry, levels=[0], colors='black', transform=ccrs.PlateCarree())        
-
-        ## Add a colorbar
-        if draw['bathymetry']:
-            cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
-            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
-            cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+            
 
         ## Draw the edges (connections)
         if draw['connectors']:
@@ -807,29 +967,118 @@ class Basins():
                     # purposes only). With this condition, there are no values edges connected
                     # across the entire planetary surface (i.e., because they will not pass
                     # through the periodic boundary).
-                    ax.plot([lon1, lon2], [lat1, lat2], '-k', linewidth=pltOpts['connectorlinewidth'], transform=ccrs.PlateCarree())
+                    lines = ax.plot([lon1, lon2], [lat1, lat2], '-k', linewidth=pltOpts['connectorlinewidth'], transform=ccrs.PlateCarree())
+                    for line in lines:
+                        line.set_zorder(10); 
 
         ## Draw the nodes (points) on the map
+        
+        ### Format
+        nodePosDict = self.G.nodes.data('pos');
+        nodeBasinID = self.G.nodes.data('basinID');
+        pos = np.zeros( (len(nodePosDict), 2) );
+        BasinID = np.zeros( (len(nodeBasinID), 1) );
+        for i in range(len(nodePosDict)):
+            pos[i,:] = nodePosDict[i];
+            BasinID[i] = nodeBasinID[i]['basinID'];
+        
+
+        ### Plot
+        basincmap =mpl.colors.ListedColormap(np.unique(node_colors));
         if draw['nodes']:
-            cnt =0
-            for node, data in self.G.nodes(data=True):
-                if draw['connectors']:
-                    ax.plot(data['pos'][1], data['pos'][0], 'o', color=node_colors[cnt], markeredgecolor='k', markeredgewidth=pltOpts['connectorlinewidth']/4, markersize=pltOpts['nodesize'], transform=ccrs.PlateCarree())  # longitude, latitude
-                else:
-                    ax.plot(data['pos'][1], data['pos'][0], 'o', color=node_colors[cnt], markeredgecolor=node_colors[cnt], markeredgewidth=pltOpts['connectorlinewidth']/4, markersize=pltOpts['nodesize'], transform=ccrs.PlateCarree())  # longitude, latitude
-                cnt+=1;
-                
+            if draw['connectors']:
+                nodeplthandle = ax.scatter(pos[:,1], pos[:,0], marker='o', c=BasinID, edgecolor='k', linewidths=pltOpts['connectorlinewidth'], s=pltOpts['nodesize'], transform=ccrs.PlateCarree(), cmap=basincmap)  # longitude, latitude
+            else:
+                nodeplthandle = ax.scatter(pos[:,1], pos[:,0], marker='o', c=BasinID, edgecolor=node_colors, linewidths=pltOpts['connectorlinewidth']/4, s=pltOpts['nodesize'], transform=ccrs.PlateCarree(), cmap=basincmap)  # longitude, latitude
+            nodeplthandle.set_zorder(11);
+
+        ## Add a colorbar(s)
+        if draw['bathymetry']:
+            basinIDcbarpad = .0;
+        else:
+            basinIDcbarpad = .05;
+        
+        # Basin IDs
+        cbar1 = plt.colorbar(nodeplthandle, ax=ax, orientation='horizontal', pad=0.0, aspect=40, shrink=0.7, cmap=basincmap);
+        cbar1.set_label(label="Basin ID", size=12);
+        cbar1.ax.tick_params(labelsize=10);  # Adjust the size of colorbar ticks
+        basinticklabels = [];
+        if not (np.size(np.unique(BasinID))==1):
+            cbar1.set_ticks( np.arange(np.max(BasinID)/(2*(np.max(BasinID)+1)), np.max(BasinID), np.max(BasinID)/((np.max(BasinID)+1))) );  # Set custom tick positions
+            for basini in np.arange(0, np.max(BasinID)+1, 1):
+                basinticklabels.append( "{:0.0f}".format(basini) );
+        else:
+            cbar1.set_ticks( [0] );  # Set custom tick positions
+            basinticklabels.append( "{:0.0f}".format(np.unique(BasinID)[0]) );
+        
+        cbar1.set_ticklabels( basinticklabels );  # Custom labels
+
+        if draw['bathymetry']:
+            # Bathymetry
+            cbar2 = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7);
+            cbar2.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+            cbar2.ax.tick_params(labelsize=10);  # Adjust the size of colorbar ticks
+
+
         if draw['gridlines']:
             ax.gridlines()
 
-        plt.title("Basin Networks ({}) - Girvan-Newman".format(self.body))
-        #plt.show()
+        plt.title("Basin Networks ({})".format(self.body))
 
         # Save figure
         if savePNG:
             plt.savefig("{}/{}".format(self.dataDir,self.filename.replace(".nc",".png")), dpi=600)
         if saveSVG:
             plt.savefig("{}/{}".format(self.dataDir,self.filename.replace(".nc",".svg")))
+
+    def mergeBasins(self, basinID1, basinID2):
+        """
+        mergeBasins method will merge basins with basin ID of basinID2
+        to basins with ID basinID1. The resulting basin network is then
+        rewitten, overriding the original basinID network. Note that
+        there is no need to reread the basin network. 
+
+        Parameters
+        ----------
+        basinID1 : INT
+            Basin ID to absorb basinID2.
+        basinID2 : INT
+            Basin ID to be absorbed by basinID1.
+        
+        Returns
+        --------
+        None.
+        """
+
+        ##########################
+        ### Merge basins Model ###
+        ##########################
+        # Get all node basin ids 
+        nodeBasinID = np.zeros( (len(self.G)), dtype=float );
+        nodes = nx.get_node_attributes(self.G, "basinID");
+        for nodeID in nodes:
+            nodeBasinID[int(nodeID)] = nodes[float(nodeID)]['basinID'];
+        
+        # Change basin ids basinID2 to basinID1 (not in nodes yet)
+        nodeBasinID[nodeBasinID==basinID2] = basinID1;
+
+        # Reset basin ID indexing
+        uniqueIDs = np.unique(nodeBasinID);
+        for i in range(len(uniqueIDs)):
+            nodeBasinID[nodeBasinID==uniqueIDs[i]] = float(i);
+        
+        # Set basin id to new merged basin
+        basinIDs = {};
+        for nodeID in self.G:
+            basinIDs[int(nodeID)] = {"basinID": nodeBasinID[int(nodeID)]};
+            
+        nx.set_node_attributes(self.G, basinIDs, "basinID");
+        
+        
+        ###########################
+        ### Write network Model ###
+        ###########################
+        nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
 
 
 
