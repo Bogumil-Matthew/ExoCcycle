@@ -427,7 +427,7 @@ class BathyMeasured():
         self.areaWeights : NUMPY ARRAY
             An array of global degree to area weights. The size is dependent on
             input resolution. The sum of the array equals 4 pi radius^2 for 
-            sufficiently high resolution.
+            sufficiently high resolution, in m2.
         self.binEdges : NUMPY ARRAY
             A numpy list of bin edges, in km, to calculate the bathymetry distribution
             over. Note that anything deeper than the last bin edge will be defined within
@@ -457,7 +457,7 @@ class BathyMeasured():
             areaWeights : NUMPY ARRAY
                 An array of global degree to area weights. The size is dependent on
                 input resolution. The sum of the array equals 4 pi radius^2 for 
-                sufficiently high resolution.
+                sufficiently high resolution, in m2.
             isostaticCompensation : DICTIONARY
                 An option to apply isostatic compensation to for ocean loading
                 on the topography. Option assumes a uniform physical properties
@@ -511,7 +511,7 @@ class BathyMeasured():
             areaWeights : NUMPY ARRAY
                 An array of global degree to area weights. The size is dependent on
                 input resolution. The sum of the array equals 4 pi radius^2 for 
-                sufficiently high resolution.
+                sufficiently high resolution, in m2.
             isostaticCompensation : DICTIONARY
                 An option to apply isostatic compensation to for ocean loading
                 on the topography. Option assumes a uniform physical properties
@@ -623,7 +623,7 @@ class BathyMeasured():
         ## Define global distribution of sea seafloor depths
         ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
         ## are define here.
-        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistribution(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
+        self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
 
 
 
@@ -657,7 +657,7 @@ class BathyMeasured():
         areaWeights : NUMPY VECTOR
             An array of global degree to area weights. The size is dependent on
             input resolution. The sum of the array equals 4 pi radius^2 for 
-            sufficiently high resolution.
+            sufficiently high resolution, in m2.
         binEdges : NUMPY VECTOR
             A numpy list of bin edges, in km, used in calculating
             the bathymetry distribution. Note that 1) anything deeper
@@ -847,7 +847,7 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     areaWeights : NUMPY ARRAY
         An array of global degree to area weights. The size is dependent on
         input resolution. The sum of the array equals 4 pi radius^2 for 
-        sufficiently high resolution.
+        sufficiently high resolution, in m2.
     highlatP : FLOAT
         Value representing the amount of ocean surface area, in decimal percent,
         that should be included in the high latitude box.
@@ -864,7 +864,7 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
         The lowest latitude of the high latitude cutoff, in degree.    
     """
     # Calculate the total seafloor area (AOC)
-    AOC = np.nansum(np.nansum( areaWeights[~np.isnan(bathymetry)] ));
+    AOC = np.nansum(np.nansum( areaWeights[~np.isnan(bathymetry) & ~(bathymetry==0)] ));
 
     # Check that high latitude box is at most 100 % of the ocean
     if highlatP > 1.0:
@@ -877,10 +877,10 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     percentArea = 0;
     while (percentArea < highlatP) and not (highlatlat == 0):
         highlatlat -= .1;
-        percentArea = np.nansum(np.nansum( areaWeights[np.abs(latitudes)>highlatlat] ))/AOC;
+        percentArea = np.nansum(np.nansum( areaWeights[(np.abs(latitudes)>highlatlat) & ~np.isnan(bathymetry) & ~(bathymetry==0)]))/AOC;
 
     # Define bathymetry parameter
-    highlatA = np.sum(np.sum( areaWeights[latitudes>highlatlat] ));
+    highlatA = np.sum(np.sum( areaWeights[(np.abs(latitudes)>highlatlat) & ~np.isnan(bathymetry) & ~(bathymetry==0)] ));
 
     # Report
     if verbose:
@@ -891,9 +891,9 @@ def calculateHighLatA(bathymetry, latitudes, areaWeights, highlatP, verbose=True
     return highlatlat, highlatA
 
 
-def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeights, binEdges=None, verbose=True):
+def calculateBathymetryDistributionGlobal(bathymetry, latitudes, highlatlat, areaWeights, binEdges=None, verbose=True):
     """
-    calculateBathymetryDistribution function calculates the bathymetry 
+    calculateBathymetryDistributionGlobal function calculates the bathymetry 
     distribution of a global or basin (depending on input) bathymetry
     model. These distrbutions can be useful as inputs for carbon cycle
     models.
@@ -911,7 +911,7 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
     areaWeights : NUMPY ARRAY
         An array of global degree to area weights. The size is dependent on
         input resolution. The sum of the array equals 4 pi radius^2 for 
-        sufficiently high resolution.
+        sufficiently high resolution, in m2.
     binEdges : NUMPY LIST
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
@@ -920,22 +920,27 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
         the code.
     verbose : BOOLEAN, optional
         Reports more information about process. The default is True.
-
-    Define
+    
+    Return
     -------
-    self.bathymetryAreaDist : NUMPY LIST
-        A histogram of seafloor bathymetry with using the following bin edges:
+    bathymetryAreaDist_wHighlat : NUMPY ARRAY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        a histogram of seafloor bathymetry with using the following bin edges:
+        0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+        that this distribution is calculated with the inclusion of high latitude
+        distribution of seafloor depths. This is what is normally inputted into
+        the LOSCAR carbon cycle model.
+    bathymetryAreaDist : NUMPY ARRAY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        a histogram of seafloor bathymetry with using the following bin edges:
         0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
         that this distribution is calculated with the exclusion of high latitude
         distribution of seafloor depths. This is what is normally inputted into
         the LOSCAR carbon cycle model.
-    self.bathymetryAreaDist_wHighlat : NUMPY LIST
-        This is the same as bathymetryAreaDist, but includes the high latitude
-        seafloor distribution of seafloor depths.
-    
-    Return
-    -------
-    None.
+    binEdges : NUMPY LIST
+        A numpy list of bin edges, in km, to calculate the bathymetry distribution
+        over. Note that anything deeper than the last bin edge will be defined within
+        the last bin.
     """
     # Set bins default array.
     if binEdges is None:
@@ -992,6 +997,165 @@ def calculateBathymetryDistribution(bathymetry, latitudes, highlatlat, areaWeigh
         plt.gca().spines['right'].set_visible(False)
 
     return bathymetryAreaDist, bathymetryAreaDist_wHighlat, binEdges
+
+
+
+def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highlatlat, areaWeights, binEdges=None, verbose=True):
+    """
+    calculateBathymetryDistributionBasin function calculates the bathymetry 
+    distribution of a global or basin (depending on input) bathymetry
+    model. These distrbutions can be useful as inputs for carbon cycle
+    models.
+
+
+    Parameters
+    ----------
+    bathymetry : NUMPY ARRAY
+        nx2n array representing seafloor depth, in m, with positive values.
+    latitudes : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    basinIDA : NUMPY ARRAY
+        nx2n array representing cell registered BasinID.
+    highlatlat : FLOAT
+        The lowest latitude of the high latitude cutoff, in degree.
+    areaWeights : NUMPY ARRAY
+        An array of global degree to area weights. The size is dependent on
+        input resolution. The sum of the array equals 4 pi radius^2 for 
+        sufficiently high resolution, in m2.
+    binEdges : NUMPY LIST
+        A numpy list of bin edges, in km, to calculate the bathymetry distribution
+        over. Note that anything deeper than the last bin edge will be defined within
+        the last bin. The default is None, but this is modified to 
+        np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]) within
+        the code.
+    verbose : BOOLEAN, optional
+        Reports more information about process. The default is True.
+    
+    Return
+    -------
+    bathymetryAreaDist : DICTIONARY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        a histogram of seafloor bathymetry with using the following bin edges:
+        0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+        that this distribution is calculated with the exclusion of high latitude
+        distribution of seafloor depths. This is what is normally inputted into
+        the LOSCAR carbon cycle model.
+    bathymetryVolFrac : DICTIONARY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        the precent basin volume, normalized to the volume of all ocean basins
+        (excluding the high latitude ocean volume).
+    bathymetryAreaFrac : DICTIONARY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        the precent basin area, normalized to the total seafloor area (including
+        the high latitude area).
+    bathymetryAreaDist_wHighlatG : NUMPY ARRAY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        a histogram of seafloor bathymetry with using the following bin edges:
+        0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+        that this distribution is calculated with the inclusion of high latitude
+        distribution of seafloor depths. This is what is normally inputted into
+        the LOSCAR carbon cycle model.
+    bathymetryAreaDistG : NUMPY ARRAY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        a histogram of seafloor bathymetry with using the following bin edges:
+        0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+        that this distribution is calculated with the exclusion of high latitude
+        distribution of seafloor depths. This is what is normally inputted into
+        the LOSCAR carbon cycle model.
+    binEdges : NUMPY LIST
+        A numpy list of bin edges, in km, to calculate the bathymetry distribution
+        over. Note that anything deeper than the last bin edge will be defined within
+        the last bin.
+    """
+    # Set bins default array.
+    if binEdges is None:
+        binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
+    
+    # Setup dictionaries to hold outputs (basin distributions, area fractions, and volume fractions)
+    bathymetryAreaDist = {};
+    bathymetryAreaFrac = {};
+    bathymetryVolFrac  = {};
+    
+    basinIDs = np.unique(basinIDA[~np.isnan(basinIDA)]);
+
+    # Iterate over basins
+    for i in range(len(basinIDs)):
+        # Set basin ID and define basin i only bathymetry
+        basinIDi = basinIDs[i];
+        
+        # Calculate bathymetry distribution of basin bathymetry (excluding high
+        # latitude areas).
+        # High latitude constraint
+        logical1 = (np.abs(latitudes)<=highlatlat) & ~np.isnan(bathymetry);
+        logical2 = (basinIDA==basinIDi);
+        bathy2   = bathymetry[logical1 & logical2];
+        weights2 = areaWeights[logical1 & logical2]/np.sum(areaWeights[logical1 & logical2]);
+
+        bathymetryAreaDisti, binEdges = np.histogram((1e-3)*bathy2, bins=binEdges, weights=weights2);
+        bathymetryAreaDist['Basin{:0.0f}'.format(basinIDi)] = 100*(bathymetryAreaDisti/np.sum(bathymetryAreaDisti));
+        bathymetryAreaFrac['Basin{:0.0f}'.format(basinIDi)] = np.sum(areaWeights[logical1 & logical2])/np.nansum(areaWeights[~np.isnan(bathymetry) & ~(bathymetry==0)])
+        bathymetryVolFrac['Basin{:0.0f}'.format(basinIDi)]  = np.sum(bathymetry[logical1 & logical2]*areaWeights[logical1 & logical2]) / np.sum(bathymetry[logical1]*areaWeights[logical1]);
+
+    # Calculate Global values
+    ## Calculate bathymetry distribution of global bathymetry (including high
+    ## latitude areas).
+    logical1 = ~np.isnan(bathymetry);
+    bathy1   = (1e-3)*bathymetry[logical1];
+    weights1 = areaWeights[logical1]/np.sum(areaWeights[logical1]);
+
+    bathymetryAreaDist_wHighlatG, binEdges = np.histogram(bathy1, bins=binEdges, weights=weights1);
+    bathymetryAreaDist_wHighlatG = 100*(bathymetryAreaDist_wHighlatG/np.sum(bathymetryAreaDist_wHighlatG));
+
+    ## Calculate bathymetry distribution of global bathymetry (excluding high
+    ## latitude areas).
+    logical2 = (np.abs(latitudes)<=highlatlat) & ~np.isnan(bathymetry);
+    bathy2   = bathymetry[logical2];
+    weights2 = areaWeights[logical2]/np.sum(areaWeights[logical2]);
+
+    bathymetryAreaDistG, binEdges = np.histogram((1e-3)*bathy2, bins=binEdges, weights=weights2);
+    bathymetryAreaDistG = 100*(bathymetryAreaDistG/np.sum(bathymetryAreaDistG));
+
+    # Report
+    if verbose:
+        print("Bin edges used:\n", binEdges);
+        print("Bathymetry area distribution excluding high latitude bathymetry:\n");
+        for basinIDi in range(len(bathymetryAreaDist)):
+            print(bathymetryAreaDist['Basin{:0.0f}'.format(basinIDi)]);
+
+        fig = plt.figure(figsize=(8,4))
+
+        # Define factors for plotting
+        factor1 = .1
+        factor2 = .25
+        if len(bathymetryAreaDist)%2:
+            factor3 = 0.5;
+        else:
+            factor3 = 0;
+        cnt = len(bathymetryAreaDist);
+
+        # Iteratively plot basin bathymetry distributions
+        for i in range(len(bathymetryAreaDist)):
+            plt.bar(x=binEdges[1:]-(factor2/2)*(cnt/2 - i -factor3)*np.diff(binEdges),
+                    height=bathymetryAreaDist['Basin{:0.0f}'.format(i)],
+                    width=factor1*np.diff(binEdges),
+                    label= "Basin {:0.0f}".format(i))
+        # ticks
+        plt.xticks(binEdges[1:]);
+        plt.yticks(np.arange(0,35,5));
+
+        # Labels
+        plt.legend();
+        plt.title("Planet's Bathymetry Distribution")
+        plt.xlabel("Bathymetry Bins [km]");
+        plt.ylabel("Seafloor Area [%]");
+
+        # figure format
+        plt.gca().spines['top'].set_visible(False)
+        plt.gca().spines['right'].set_visible(False)
+
+    return bathymetryAreaDist, bathymetryVolFrac, bathymetryAreaFrac, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges
+
 
 #######################################################################
 ############## ExoCcycle Define Ccycle Bathymetry Params ##############
