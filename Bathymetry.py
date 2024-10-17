@@ -15,6 +15,9 @@ from netCDF4 import Dataset
 import numpy as np
 from scipy.interpolate import NearestNDInterpolator
 import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap
+import cartopy.crs as ccrs # type: ignore
+from matplotlib.gridspec import GridSpec
 
 #######################################################################
 #################### ExoCcycle Create Bathymetries ####################
@@ -912,7 +915,7 @@ def calculateBathymetryDistributionGlobal(bathymetry, latitudes, highlatlat, are
         An array of global degree to area weights. The size is dependent on
         input resolution. The sum of the array equals 4 pi radius^2 for 
         sufficiently high resolution, in m2.
-    binEdges : NUMPY LIST
+    binEdges : NUMPY LIST, optional
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
         the last bin. The default is None, but this is modified to 
@@ -937,7 +940,7 @@ def calculateBathymetryDistributionGlobal(bathymetry, latitudes, highlatlat, are
         that this distribution is calculated with the exclusion of high latitude
         distribution of seafloor depths. This is what is normally inputted into
         the LOSCAR carbon cycle model.
-    binEdges : NUMPY LIST
+    binEdges : NUMPY LIST, optional
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
         the last bin.
@@ -966,9 +969,9 @@ def calculateBathymetryDistributionGlobal(bathymetry, latitudes, highlatlat, are
 
     # Report
     if verbose:
-        print("Bin edges used:\n", binEdges)
-        print("Bathymetry area distribution including high latitude bathymetry:\n",bathymetryAreaDist_wHighlat);
-        print("Bathymetry area distribution excluding high latitude bathymetry:\n",bathymetryAreaDist);
+        # print("Bin edges used:\n", binEdges)
+        # print("Bathymetry area distribution including high latitude bathymetry:\n",bathymetryAreaDist_wHighlat);
+        # print("Bathymetry area distribution excluding high latitude bathymetry:\n",bathymetryAreaDist);
 
         fig = plt.figure(figsize=(8,4))
 
@@ -1000,7 +1003,7 @@ def calculateBathymetryDistributionGlobal(bathymetry, latitudes, highlatlat, are
 
 
 
-def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highlatlat, areaWeights, binEdges=None, verbose=True):
+def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basinIDA, highlatlat, areaWeights, binEdges=None, verbose=True):
     """
     calculateBathymetryDistributionBasin function calculates the bathymetry 
     distribution of a global or basin (depending on input) bathymetry
@@ -1015,6 +1018,9 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highla
     latitudes : NUMPY ARRAY
         nx2n array representing cell registered latitudes, in deg,
         ranging from [-90, 90]. Latitudes change from row to row.
+    longitudes : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-180, 180]. Latitudes change from row to row.
     basinIDA : NUMPY ARRAY
         nx2n array representing cell registered BasinID.
     highlatlat : FLOAT
@@ -1023,7 +1029,7 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highla
         An array of global degree to area weights. The size is dependent on
         input resolution. The sum of the array equals 4 pi radius^2 for 
         sufficiently high resolution, in m2.
-    binEdges : NUMPY LIST
+    binEdges : NUMPY LIST, optional
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
         the last bin. The default is None, but this is modified to 
@@ -1063,7 +1069,7 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highla
         that this distribution is calculated with the exclusion of high latitude
         distribution of seafloor depths. This is what is normally inputted into
         the LOSCAR carbon cycle model.
-    binEdges : NUMPY LIST
+    binEdges : NUMPY LIST, optional
         A numpy list of bin edges, in km, to calculate the bathymetry distribution
         over. Note that anything deeper than the last bin edge will be defined within
         the last bin.
@@ -1118,39 +1124,73 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, basinIDA, highla
 
     # Report
     if verbose:
-        print("Bin edges used:\n", binEdges);
-        print("Bathymetry area distribution excluding high latitude bathymetry:\n");
-        for basinIDi in range(len(bathymetryAreaDist)):
-            print(bathymetryAreaDist['Basin{:0.0f}'.format(basinIDi)]);
+        # print("Bin edges used:\n", binEdges);
+        # print("Bathymetry area distribution excluding high latitude bathymetry:\n");
+        # for basinIDi in range(len(bathymetryAreaDist)):
+        #     print(bathymetryAreaDist['Basin{:0.0f}'.format(basinIDi)]);
 
-        fig = plt.figure(figsize=(8,4))
+        #fig = plt.figure(figsize=(8,4))
 
-        # Define factors for plotting
+        # Define the number of basins
+        cnt = len(bathymetryAreaDist);
+
+        # Create colormap
+        ## Set colormap
+        cmap = plt.get_cmap("Pastel1")
+        ## Extract basinCnt colors from the colormap
+        colors_rgb = [cmap(i) for i in range(cnt)]
+        ## Convert RGB to hex
+        colors = ['#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors_rgb]
+        ## Create a custom colormap from the list of colors
+        custom_cmap = LinearSegmentedColormap.from_list("custom_pastel", colors, N=256)
+
+        # Set up the Mollweide projection
+        fig = plt.figure(figsize=(8, 8))
+        gs = GridSpec(2, 1, height_ratios=[1, 1]);  # 2 rows, 1 column, with both row heights equal.
+
+        ax1 = fig.add_subplot(gs[0], projection=ccrs.Mollweide());
+
+        # Plot basin contourf and coastlines
+
+        ## Add the plot using pcolormesh
+        mesh = ax1.pcolormesh(longitudes, latitudes, basinIDA, cmap=custom_cmap, transform=ccrs.PlateCarree())
+
+        ## Add coastlines
+        ### Set any np.nan values to 0.
+        bathymetry[np.isnan(bathymetry)] = 0;
+        ### Plot coastlines.
+        zeroContour = ax1.contour(longitudes, latitudes, bathymetry,levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+
+        # Make bathymetry distribution plot
+        ax2 = fig.add_subplot(gs[1]);
+
+        ## Define factors for plotting
         factor1 = .1
         factor2 = .25
         if len(bathymetryAreaDist)%2:
             factor3 = 0.5;
         else:
             factor3 = 0;
-        cnt = len(bathymetryAreaDist);
-
-        # Iteratively plot basin bathymetry distributions
+        
+        ## Iteratively plot basin bathymetry distributions
         for i in range(len(bathymetryAreaDist)):
             plt.bar(x=binEdges[1:]-(factor2/2)*(cnt/2 - i -factor3)*np.diff(binEdges),
                     height=bathymetryAreaDist['Basin{:0.0f}'.format(i)],
                     width=factor1*np.diff(binEdges),
-                    label= "Basin {:0.0f}".format(i))
-        # ticks
+                    label= "Basin {:0.0f}".format(i),
+                    color=colors[i])
+        ## ticks
         plt.xticks(binEdges[1:]);
         plt.yticks(np.arange(0,35,5));
 
-        # Labels
+        ## Labels
         plt.legend();
         plt.title("Planet's Bathymetry Distribution")
         plt.xlabel("Bathymetry Bins [km]");
         plt.ylabel("Seafloor Area [%]");
 
-        # figure format
+        ## figure format
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
 

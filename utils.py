@@ -15,15 +15,12 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import networkx as nx
+import networkx as nx # type: ignore
 from netCDF4 import Dataset 
 import cartopy.crs as ccrs # type: ignore
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LinearSegmentedColormap
 
-# For GUI (FIXME: choosing basin definitions, might not be needed anymore)
-import tkinter as tk
-from tkinter import messagebox
 
 # For progress bars
 from tqdm import tqdm
@@ -431,8 +428,14 @@ class Basins():
         self.highlatlat = self.nc['highlatlat'][:].data;
         self.highlatA = self.nc['highlatA'][:].data;
         self.VOC = self.nc['VOC'][:].data;
-        self.AOC = self.nc['AOC'][:].data;        
-        
+        self.AOC = self.nc['AOC'][:].data;    
+
+
+        # Define class attributes to be redefined throughout analysis
+        ## Have basin connection been defined.
+        self.basinConnectionDefined = False;
+        ## Have basin bathymetry parameters been defined.
+        self.BasinParametersDefined = False;
         
         # Close file  
         self.nc.close();
@@ -486,9 +489,6 @@ class Basins():
         models.
 
         """
-        import networkx as nx
-        from geopy.distance import geodesic
-
 
         ##########################
         ### Write/Load network ###
@@ -511,7 +511,7 @@ class Basins():
                 self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
                 self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
                 bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
-        
+            
             # Define resolution
             self.resolution = self.reducedRes*np.diff(self.lon)[0][0];
         
@@ -537,7 +537,8 @@ class Basins():
                 self.reducedRes = reducedRes['factor'];
                 self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
                 self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
-                bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                bathymetryf  = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                areaWeightsf = self.areaWeights[::self.reducedRes].T[::self.reducedRes].T.flatten();
 
             # Distance, in degrees, to a diagonal node.
             cornerDis = self.reducedRes/np.sin(np.pi/4);
@@ -546,8 +547,9 @@ class Basins():
             pos = np.zeros( (2, len(~np.isnan(bathymetryf))) );
             for i in tqdm( range(len(self.lonf)) ):
                 bathymetryi = bathymetryf[i];
+                areaWeighti = areaWeightsf[i]
                 if (~np.isnan(bathymetryi)):
-                    points[int(cnt)] = (self.latf[i], self.lonf[i], bathymetryi);    # (latitude, longitude, depth) w/ units (deg, deg, m)
+                    points[int(cnt)] = (self.latf[i], self.lonf[i], bathymetryi, areaWeighti);    # (latitude, longitude, depth, areaWeight) w/ units (deg, deg, m, m2)
                     pos[:,int(cnt)] = np.array( [self.latf[i], self.lonf[i]] ); 
                     cnt+=1;
 
@@ -556,31 +558,7 @@ class Basins():
 
             # Add nodes (points)
             for node, values in points.items():
-                G.add_node(node, pos=values[0:2], depth=values[2])
-
-            """
-            # Add edges with weights based on geographic distance            
-            for node1, values1 in tqdm(points.items()):
-                coords1 = values1[0:2];
-                for node2, values2 in points.items():
-                    coords2 = values2[0:2];
-                    if node1 != node2: # If the nodes are the same
-                        
-                        if (np.abs(points[node1][0]-points[node2][0])<cornerDis) & (np.abs(points[node1][1]-points[node2][1])<cornerDis):
-                            # (Within cornerDis in latitude) & (Within cornerDis in longitude)
-                            # If the nodes are adjacent seafloor node
-
-                            # Calculate geographic distance between points using geodesic distance
-                            bathyAve= (values1[2]+values2[2])/2;
-                            hexsidelengnth = hexPolylineLength(coords1, coords2, verbose=False);
-                            G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth)
-                        elif (points[node1][1]==np.min(self.lonf)) & (np.abs(points[node1][0]-points[node2][0])<cornerDis) & (np.abs(points[node1][1]+points[node2][1])<cornerDis):
-                            # (On left most boundary) & (Within cornerDis in latitude) & (Within cornerDis in longitude)
-                            # If nodes are adjacent seafloor nodes and at a periodic boundary 
-                            bathyAve= (values1[2]+values2[2])/2;
-                            hexsidelengnth = hexPolylineLength(coords1, (points[node2][0], -1*points[node2][1]), verbose=False);
-                            G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth)
-            """    
+                G.add_node(node, pos=values[0:2], depth=values[2], areaWeightm2=values[3]);
 
             # Update to the above code block which Adds edges with weights based on geographic distance.
             # This code is significantly faster than the above code block
@@ -737,9 +715,8 @@ class Basins():
                         bathyAve= (values1[2]+values2)/2;
                         hexsidelengnth = hexPolylineLength(coords1, coords2, verbose=False);
                         
-                        #G.add_edge(node1, node2, bathyAve=hexsidelengnth);
                         G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth);
-            #print("Bathymetry is not being used as a weight for node edges")
+            
 
 
 
@@ -748,10 +725,6 @@ class Basins():
 
             # Find communities of nodes using the Girvan-Newman algorithm
             self.findCommunities(method = method, minBasinCnt = minBasinCnt);
-
-            # Find nodes with high inbetweenness
-            # FIXME:
-            
 
             ###########################
             ### Write network Model ###
@@ -1195,19 +1168,50 @@ class Basins():
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
-        Defines
+        Redefines
         ----------
-        BasinIDA : NUMPY ARRAY
-            FIXME: ADD
-        bathymetryAreaDistBasin : DICTIONARY
-            FIXME: ADD
-        bathymetryAreaFraction : DICTIONARY
-            FIXME: ADD
-        bathymetryVolFraction : DICTIONARY
-            FIXME: ADD
-        binEdges : NUMPY ARRAY
-            FIXME: ADD
-        
+        self.BasinIDA : NUMPY ARRAY
+            An nx2n array of values corresponding to basin IDs. Location of no
+            basins are given a fill value of np.nan. The size of this arry depends
+            on input bathymetry models as well as user input self.reducedRes class
+            attribute. 
+        self.bathymetryAreaDistBasin : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the exclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.bathymetryVolFraction : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            the precent basin volume, normalized to the volume of all ocean basins
+            (excluding the high latitude ocean volume).
+        self.bathymetryAreaFraction : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            the precent basin area, normalized to the total seafloor area (including
+            the high latitude area).
+        self.bathymetryAreaDist_wHighlatG : NUMPY ARRAY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the inclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.bathymetryAreaDistG : NUMPY ARRAY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the exclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.binEdges : NUMPY LIST, optional
+            A numpy list of bin edges, in km, to calculate the bathymetry distribution
+            over. Note that anything deeper than the last bin edge will be defined within
+            the last bin.
+        self.BasinParametersDefined : BOOLEAN
+            Set to True to indicate that basin bathymetry parameters have been defined.
+            
+
         Returns
         --------
         None.
@@ -1222,37 +1226,34 @@ class Basins():
         # Define array for basinIDs and corresponding node ids (use the reduced resolution)
         nodePosDict = self.G.nodes.data('pos');
         nodeBasinID = self.G.nodes.data('basinID');
-        #nodeIDDictionary = self.G.nodes;
         pos = np.zeros( (len(nodePosDict), 2) );
         BasinID = np.zeros( (len(nodeBasinID), 1) );
-        #nodeID = np.zeros( (len(nodeBasinID), 1) );
         for i in range(len(nodePosDict)):
             pos[i,:] = nodePosDict[i];
             BasinID[i] = nodeBasinID[i]['basinID'];
-            #nodeID[i] = nodeIDDictionary[i];
         
         BasinIDA = np.empty(np.shape(lonA));
         BasinIDA[:] = np.nan;
-        nodeIDA = np.empty(np.shape(lonA));
-        #nodeIDA[:] = np.nan;
         for nodei in range(len(pos[:,1])):
             BasinIDA[(lonA==pos[nodei,1])&(latA==pos[nodei,0])] = BasinID[nodei];
-            #nodeIDA[(lonA==pos[nodei,1])&(latA==pos[nodei,0])] = nodeID[nodei];
 
         # Calculate basin distributions
-        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, verbose=verbose)
+        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, lonA, BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, verbose=verbose)
         
         # Define basinID and nodeid array
         self.BasinIDA = BasinIDA;
-        #self.nodeIDA = nodeIDA;
 
         # Set basin bathymetry parameters
         self.bathymetryAreaDistBasin = bathymetryAreaDistBasin
-        self.bathymetryAreaFraction  = bathymetryAreaFraction
         self.bathymetryVolFraction   = bathymetryVolFraction
-        self.binEdges                = binEdges
+        self.bathymetryAreaFraction  = bathymetryAreaFraction
         self.bathymetryAreaDist_wHighlatG = bathymetryAreaDist_wHighlatG
         self.bathymetryAreaDistG = bathymetryAreaDistG
+        self.binEdges                = binEdges
+
+        # Change class attribute to indicate that basin bathymetry
+        # parameters have been defined.
+        self.BasinParametersDefined = True;
 
     def calculateBasinConnectivityParameters(self, binEdges=None, disThres=444, verbose=True):
         """
@@ -1275,19 +1276,41 @@ class Basins():
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
-        Returns
+        Redefined
         --------
-            basinAreaConnection : NUMPY ARRAY
-                An area weighted array that describes the surface area
-                connection between all basins (e.g., a 3x3 would describe
-                the surface connection between 3 basins).
+        self.basinCnt : INT
+            Number of basins in model.
+        self.basinConCnt : INT
+            (self.basinCnt^2-self.basinCnt)/2. This value corresponds to the number
+            of basin connections.
+        self.connectingNodes : NUMPY ARRAY
+            self.basinConCnt length list of lists. Each list holds the set of node
+            IDs that correspond to a basin connection.
+        self.connectiveBathy : NUMPY ARRAY
+            self.basinConCnt length list of lists. Each list holds the set of
+            bathymetry, in m, that correspond to a basin connection's nodes.
+        self.connectiveAreaW : NUMPY ARRAY
+            self.basinConCnt length list of lists. Each list holds the set of area
+            weights that correspond to a basin connection's nodes.
+        self.basinAreaConnection : NUMPY ARRAY
+            A self.basinCnt x self.basinCnt matrix that enumerate the connections
+            between basins. This is a useful book keeping attribute. 
+        self.bathymetryConDist : NUMPY ARRAY
+            A self.basinCnt x self.basinCnt x (binEdges-1) matrix that holds area
+            weighted bathymetry distributions of connectivity bathymetry between
+            basins. Distributions sum to 100%. 
+        self.basinConnectionDefined : BOOLEAN
+            Set to positive to indicate basin connectivity parameters are calculated.
 
-            ARRAY2 : NUMPY ARRAY
-                A 3x3xlen(binEdges) size array with each entry in the 3x3
-                array representing bathymetry distributions.
-        
+
+        self.basinAreaConnection : NUMPY ARRAY
+            An area weighted array that describes the surface area
+            connection between all basins (e.g., a 3x3 would describe
+            the surface connection between 3 basins).
+        self.ARRAY2 : NUMPY ARRAY
+            A 3x3xlen(binEdges) size array with each entry in the 3x3
+            array representing bathymetry distributions.
         """
-        print("working progress")
         ############################################################
         ##### Find the connectivity between each set of basins #####
         ############################################################
@@ -1296,8 +1319,9 @@ class Basins():
         ############################################################
         ############# Find nodes boarding other basins #############
         ############################################################
-        # Define the basin count and graph
-        basinCnt = len(np.unique(self.BasinIDA))-1
+        # Define the basin and connection count and graph
+        self.basinCnt = len(np.unique(self.BasinIDA))-1
+        self.basinConCnt = (self.basinCnt*self.basinCnt-self.basinCnt)//2
         BasinNodes = self.G;
 
         # Define node position array and basin ID vector
@@ -1350,55 +1374,60 @@ class Basins():
         ############################################################
         # Define basinAreaConnection, a matrix which will hold an
         # enumeration of the connections between basins.
-        basinAreaConnection = np.zeros((basinCnt,basinCnt), dtype=float);
+        self.basinAreaConnection = np.zeros((self.basinCnt,self.basinCnt), dtype=float);
         # Define basinAreaConnectionTracker, which keeps track if the 
         # symmetric basin connection (e.g., Atlantic-Indian for Indian-Atlantic)
         # has already been defined.
-        basinAreaConnectionTracker = np.ones((basinCnt,basinCnt), dtype=bool);
+        basinAreaConnectionTracker = np.ones((self.basinCnt,self.basinCnt), dtype=bool);
         cnt=0
 
         # Populate basinAreaConnection with enumerations of basin
         # connections.
         ## Loop over basins
-        for basini in range(basinCnt):
+        for basini in range(self.basinCnt):
             ## Loop over basins
-            for basinj in range(basinCnt):
+            for basinj in range(self.basinCnt):
                 ## Loop over other basins
                 if  (basini!=basinj) & basinAreaConnectionTracker[basinj,basini]:
                     ## Set basin connection ID
-                    basinAreaConnection[basini,basinj] = cnt;
+                    self.basinAreaConnection[basini,basinj] = cnt;
                     cnt+=1;
                     ## Indicate that basin connection ID has been set
                     basinAreaConnectionTracker[basini,basinj] = False;
                 elif (basini!=basinj):
                     ## If symmetric calculation has already been done
                     ## then set the symmetric array value
-                    basinAreaConnection[basini,basinj] = basinAreaConnection[basinj,basini]
+                    self.basinAreaConnection[basini,basinj] = self.basinAreaConnection[basinj,basini]
                 elif (basini==basinj):
-                    basinAreaConnection[basini,basinj] = -1;
+                    self.basinAreaConnection[basini,basinj] = -1;
         
         ############################################################
-        ####### Get the bathymetry and nodeID for all nodes ########
+        ####### Get the bathy/weights/nodeID for all nodes #########
         ############################################################
         allNodeIDs = np.array([], dtype=float);
         allNodeBathymetry = np.array([], dtype=float);
+        allNodeAreaWeights = np.array([], dtype=float);
         for node in BasinNodes:
             allNodeIDs = np.append(allNodeIDs, node);
-            allNodeBathymetry = np.append(allNodeBathymetry, BasinNodes.nodes[node]['depth']);
+            allNodeBathymetry  = np.append(allNodeBathymetry, BasinNodes.nodes[node]['depth']);
+            allNodeAreaWeights = np.append(allNodeAreaWeights, BasinNodes.nodes[node]['areaWeightm2']);
+            
         
         ############################################################
         ### Set nodeIDs and bathymetry for each basin connection ###
         ############################################################
 
-        # Define basin connective nodes and bathymetry as list of list.
-        # This is done such that each basin connection can have different
-        # numbers of nodes to describe them.
-        self.connectiveBathy = np.empty((basinCnt*basinCnt-basinCnt)//2,dtype=object)
-        self.connectingNodes = np.empty((basinCnt*basinCnt-basinCnt)//2,dtype=object)
+        # Define basin connective nodes, bathymetry, and area weights
+        #  as list of list. This is done such that each basin connection
+        # can have different numbers of nodes to describe them.
+        self.connectiveBathy = np.empty(self.basinConCnt,dtype=object)
+        self.connectiveAreaW = np.empty(self.basinConCnt,dtype=object)
+        self.connectingNodes = np.empty(self.basinConCnt,dtype=object)
         for i in range(len(self.connectingNodes)):
+            self.connectiveAreaW[i] = np.array([], dtype = float);
             self.connectiveBathy[i] = np.array([], dtype = float);
             self.connectingNodes[i] = np.array([], dtype = float);
-        
+
         # Populate connectingNodes, for each basin connection, with
         # node IDs that are within disThres of the basin edges.
         ## Iterate over basin edge nodes
@@ -1414,8 +1443,8 @@ class Basins():
             
             ## Find the correct connection
             connectionID = int(basinEdgeNodeBasinIDs1[int(i)])
-            connectionID = basinAreaConnection[int(basinEdgeNodeBasinIDs1[int(i)]),
-                                               int(basinEdgeNodeBasinIDs2[int(i)])]
+            connectionID = self.basinAreaConnection[int(basinEdgeNodeBasinIDs1[int(i)]),
+                                                    int(basinEdgeNodeBasinIDs2[int(i)])]
             
             ## Add nodeIDs to appropriate basin connection list (using connectionID)
             ## And remove any repeat nodes
@@ -1424,12 +1453,14 @@ class Basins():
                                                                     allNodeIDs[logical] );
                 self.connectingNodes[int(connectionID)] = np.unique(self.connectingNodes[int(connectionID)]);
     
-        # Add bathymetry to appropriate basin connection list
-        # (using connectionID).
+        # Add bathymetry and area weights to appropriate basin
+        # connection list (using connectionID).
         ## Loop over unique basin connections
         for connectionIDi in range(len(self.connectingNodes)):
             self.connectiveBathy[int(connectionIDi)] = np.append(self.connectiveBathy[int(connectionIDi)],
                                                                  allNodeBathymetry[self.connectingNodes[int(connectionIDi)].astype('int')] );
+            self.connectiveAreaW[int(connectionIDi)] = np.append(self.connectiveAreaW[int(connectionIDi)],
+                                                                 allNodeAreaWeights[self.connectingNodes[int(connectionIDi)].astype('int')] );
         
         ############################################################
         # Calculate bathymetry distributions for basin connections #
@@ -1441,34 +1472,46 @@ class Basins():
             binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
     
         # Setup dictionary to hold basin distributions.
-        self.bathymetryConDist = {};
+        #self.bathymetryConDist = {};
+        self.bathymetryConDist = np.zeros( (self.basinCnt, self.basinCnt, len(binEdges)-1) ,dtype=float)
     
         # Calculate all basin connection bathymetry distributions.
         ## Iterate over basin connections
         for connectionIDi in range(len(self.connectingNodes)):
-            print("Need to add area weights to properly represent bathymetry distribution at basin connection.")
             # Calculate a basin connection bathymetry distributions.
-            self.bathymetryConDisti, binEdges = np.histogram((1e-3)*self.connectiveBathy[connectionIDi],
+            bathymetryConDisti, binEdges = np.histogram((1e-3)*self.connectiveBathy[connectionIDi],
+                                                             weights = self.connectiveAreaW[connectionIDi],
                                                              bins=binEdges);
             # Add the distribution information to dictionary.
-            self.bathymetryConDist['Connection{:0.0f}'.format(connectionIDi)] = 100*(self.bathymetryConDisti/np.sum(self.bathymetryConDisti));
-    
+            #self.bathymetryConDist['Connection{:0.0f}'.format(connectionIDi)] = 100*(bathymetryConDisti/np.sum(bathymetryConDisti));
+            # 
+            for symmeticIndex in np.argwhere(self.basinAreaConnection == connectionIDi):
+                self.bathymetryConDist[ symmeticIndex[0], symmeticIndex[1] ] = 100*(bathymetryConDisti/np.sum(bathymetryConDisti));
+        
+
+        # Change class variable to indicate that basin connectivity
+        # parameters have been defined.
+        self.basinConnectionDefined = True;
+        
+
         ############################################################
         ####################### Plot results #######################
         ############################################################
         if verbose:
             # Report the basin connectivity distributions
-            print("Bin edges used:\n", binEdges);
-            print("Bathymetry area distribution including high latitude bathymetry:\n");
-            for connectionIDi in range(len(self.connectingNodes)):
-                print(self.bathymetryConDist['Connection{:0.0f}'.format(connectionIDi)]);
+            # print("Bin edges used:\n", binEdges);
+            # print("Bathymetry area distribution including high latitude bathymetry:\n");
+            # for connectionIDi in range(self.basinConCnt):
+            #     idx = np.argwhere(connectionIDi==self.basinAreaConnection)[0];
+            #     print(self.bathymetryConDist[idx[0], idx[1]]);
             
             # Plot the basin IDs, connectivity nodes, and their
             # bathymetry distributions
-            self.plotBasinConnections(pos, basinCnt, binEdges);
+            self.plotBasinConnections(pos, binEdges);
 
 
-    def plotBasinConnections(self, pos,  basinCnt, binEdges=None, verbose=True):
+    def plotBasinConnections(self, pos, binEdges=None,
+                             savePNG=False, saveSVG=False, outputDir = os.getcwd(), fidName = "plotBasinConnections.png"):
         """
         plotBasinConnections is used to plot results calculating from
         running the method calculateBasinConnectivityParameters.
@@ -1478,16 +1521,16 @@ class Basins():
         pos : NUMPY ARRAY
             An nx2 array with columns of latitude and longitude, in degrees. This
             array should represent the locations of basin nodes.
-        basinCnt : INT
-            Number of basins in model.
         binEdges : NUMPY LIST, optional
             A numpy list of bin edges, in km, to calculate the bathymetry distribution
             over. Note that anything deeper than the last bin edge will be defined within
             the last bin. The default is None, but this is modified to 
             np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]) within
             the code.
-        verbose : BOOLEAN, optional
-            Reports more information about process. The default is True.
+        savePNG : BOOLEAN
+            An option to save an PNG output. The default is False.
+        saveSVG : BOOLEAN
+            An option to save an SVG output. The default is False.
 
         Returns
         --------
@@ -1506,10 +1549,29 @@ class Basins():
 
         ax1 = fig.add_subplot(gs[0], projection=ccrs.Mollweide());
 
+        # Create colormap (basins IDs)
+        ## Set colormap
+        cmap1 = plt.get_cmap("Pastel1")
+        ## Extract basinCnt colors from the colormap
+        colors_rgb1 = [cmap1(i) for i in range(self.basinCnt)]
+        ## Convert RGB to hex
+        colors1 = ['#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors_rgb1]
+        ## Create a custom colormap from the list of colors
+        custom_cmap1 = LinearSegmentedColormap.from_list("custom_pastel", colors1, N=256)
+
+        # Create colormap (Connection IDs)
+        cmap2 = plt.get_cmap("Dark2")
+        ## Extract basinCnt colors from the colormap
+        colors_rgb2 = [cmap2(i) for i in range(self.basinCnt)]
+        ## Convert RGB to hex
+        colors2 = ['#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors_rgb2]
+        ## Create a custom colormap from the list of colors
+        custom_cmap2 = LinearSegmentedColormap.from_list("custom_pastel", colors2, N=256)
+
         # Plot basin contourf and coastlines
 
         ## Add the plot using pcolormesh
-        mesh = ax1.pcolormesh(self.lon, self.lat, self.BasinIDA, cmap="Pastel1", transform=ccrs.PlateCarree())
+        mesh = ax1.pcolormesh(self.lon, self.lat, self.BasinIDA, cmap=custom_cmap1, transform=ccrs.PlateCarree())
 
         ## Add coastlines
         ### Set any np.nan values to 0.
@@ -1527,47 +1589,36 @@ class Basins():
             for lat, lon in pos[self.connectingNodes[connectingNodei].astype('int')]:
                 BC[(self.lat==lat)&(self.lon==lon)] = connectingNodei;
 
-        ## Set colormap
-        cmap = plt.get_cmap("Dark2")
-        ## Extract basinCnt colors from the colormap
-        colors_rgb = [cmap(i) for i in range(basinCnt)]
-        ## Convert RGB to hex
-        colors = ['#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors_rgb]
-        ## Create a custom colormap from the list of colors
-        custom_cmap = LinearSegmentedColormap.from_list("custom_pastel", colors, N=256)
-
         ## Plot 
         plt.contourf(self.lon, self.lat, BC,
-                     cmap=custom_cmap,
+                     cmap=custom_cmap2,
                      transform=ccrs.PlateCarree());
         
 
         # Plot gridlines
         ax1.gridlines()
         
-
         # Plot bathymetry distributions of basin connections.
 
         ## Set new axis to plot on
         ax2 = fig.add_subplot(gs[1]);
 
-
         ## Define factors for plotting
         factor1 = .1
         factor2 = .25
-        if len(self.bathymetryConDist)%2:
+        if self.basinCnt%2:
             factor3 = 0.5;
         else:
             factor3 = 0;
-        cnt = len(self.bathymetryConDist);
 
         ## Iteratively plot basin bathymetry distributions
-        for i in range(len(self.bathymetryConDist)):
-            plt.bar(x=binEdges[1:]-(factor2/2)*(cnt/2 - i -factor3)*np.diff(binEdges),
-                    height=self.bathymetryConDist['Connection{:0.0f}'.format(i)],
+        for i in range(self.basinConCnt):
+            idx = np.argwhere(i==self.basinAreaConnection)[0];
+            plt.bar(x=binEdges[1:]-(factor2/2)*(self.basinConCnt/2 - i -factor3)*np.diff(binEdges),
+                    height=self.bathymetryConDist[idx[0],idx[1]],
                     width=factor1*np.diff(binEdges),
                     label= "Connection {:0.0f}".format(i),
-                    color=colors[i])
+                    color=colors2[i])
         ## Format ticks
         plt.xticks(binEdges[1:]);
         plt.yticks(np.arange(0,35,5));
@@ -1584,22 +1635,14 @@ class Basins():
         
 
         # Save figure
-        #if savePNG:
-        #    plt.savefig("{}/{}".format(outputDir,fidName), dpi=600)
-        #if saveSVG:
-        #    plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+        if savePNG:
+            plt.savefig("{}/{}".format(outputDir,fidName), dpi=600)
+        if saveSVG:
+            plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+            
 
 
-
-
-
-
-                
-    
-
-
-
-    def saveCcycleParameter(self):
+    def saveCcycleParameter(self, verbose=True):
         """
         saveCcycleParameter method create a new netCDF4 containing 
         the original bathymetry model, areaweights, and other global
@@ -1612,14 +1655,9 @@ class Basins():
         following for a global ocean system that has 3 basins:
 
         group /basinConnections:
-            FIXME: Working progress to include bathymetry distributions
-            that connect basins... these could be formated as the following
-
-            1) An area weighted array that describes the surface area connection
-            between all basins (e.g., a 3x3 would describe the surface connection
-            between 3 basins)
-
-            2) An array of bathymetry distributions (3x3xlen(binEdges))
+            dimensions(sizes): binEdges(13), BasinID(3)
+            variables(dimensions):
+            basinConnectionBathymetry(BasinID, BasinID, binEdges)
 
 
         group /CycleParms:
@@ -1636,8 +1674,8 @@ class Basins():
             float64 fanoc(BasinID),
             float64 highlatlat(),
             float64 highlatA(),
-            float64 VOC(),
             float64 AOC()
+            float64 VOC(),
             groups: 
 
         group /Arrays:
@@ -1650,6 +1688,11 @@ class Basins():
             float64 areaWeights(lat)
             groups: 
 
+        Parameters
+        -----------
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
         Returns
         --------
         None.
@@ -1659,14 +1702,37 @@ class Basins():
         
         # Make new .nc file
         ncfile = Dataset(BathyPath, mode='w', format='NETCDF4')
-        CycleParmsGroup = ncfile.createGroup("CycleParms")
+
+        # Report what values will be stored in saved netCDF4
+        storedValuesStrV = ["---", "---"]
+        if self.BasinParametersDefined:
+            storedValuesStrV[0] = "";
+        else:
+            storedValuesStrV[0] = "not ";
+        if self.basinConnectionDefined:
+            storedValuesStrV[1] = "";
+        else:
+            storedValuesStrV[1] = "not ";
+        if verbose:
+            print("Basin bathymetry parameters are {}being stored in netCDF4 group CycleParms".format(storedValuesStrV[0]));
+            print("Basin connectivity bathymetry parameters are {}being stored in netCDF4 group basinConnections".format(storedValuesStrV[1]));
+
+        # Define groups
         ArraysGroup = ncfile.createGroup("Arrays")
+        if self.BasinParametersDefined:
+            CycleParmsGroup = ncfile.createGroup("CycleParms")
+        if self.basinConnectionDefined:
+            BasinConnectionsGroup = ncfile.createGroup("basinConnections")
 
         # Define dimension (latitude, longitude, and bathymetry distributions)
         lat_dim = ArraysGroup.createDimension('lat', len(self.bathymetry[:,0]));     # latitude axis
         lon_dim = ArraysGroup.createDimension('lon', len(self.bathymetry[0,:]));     # longitude axis
-        binEdges_dim = CycleParmsGroup.createDimension('binEdges', len(self.binEdges[1:]));              # distribution
-        basinID_dim = CycleParmsGroup.createDimension('BasinID', len(self.bathymetryAreaDistBasin));     # BasinID
+        if self.BasinParametersDefined:
+            binEdges_dim = CycleParmsGroup.createDimension('binEdges', len(self.binEdges[1:]));              # distribution
+            basinID_dim = CycleParmsGroup.createDimension('BasinID', len(self.bathymetryAreaDistBasin));     # BasinID
+        if self.basinConnectionDefined:
+            binEdges_dim = BasinConnectionsGroup.createDimension('binEdges', len(self.binEdges[1:]));              # distribution
+            basinID_dim = BasinConnectionsGroup.createDimension('BasinID', len(self.bathymetryAreaDistBasin));     # BasinID
         
         # Define lat/lon with the same names as dimensions to make variables.
         lat = ArraysGroup.createVariable('lat', np.float32, ('lat',));
@@ -1690,58 +1756,63 @@ class Basins():
         areaWeights.standard_name = 'areaWeights'
 
         # Define variables for bathymetry distributions (vectors)
-        ## Global
-        binEdges = CycleParmsGroup.createVariable('binEdges', np.float32, ('binEdges',));
-        binEdges.units = 'km'; binEdges.long_name = 'km depth';
+        if self.BasinParametersDefined:
+            ## Global
+            binEdges = CycleParmsGroup.createVariable('binEdges', np.float32, ('binEdges',));
+            binEdges.units = 'km'; binEdges.long_name = 'km depth';
 
-        distribution_whighlat = CycleParmsGroup.createVariable('Global-whighlat', np.float64, ('binEdges',))
-        distribution_whighlat.units = 'kernal distribution'
-        distribution_whighlat.standard_name = 'Global-whighlat'
+            distribution_whighlat = CycleParmsGroup.createVariable('Global-whighlat', np.float64, ('binEdges',))
+            distribution_whighlat.units = 'kernal distribution'
+            distribution_whighlat.standard_name = 'Global-whighlat'
 
-        distribution = CycleParmsGroup.createVariable('Global', np.float64, ('binEdges',))
-        distribution.units = 'kernal distribution'
-        distribution.standard_name = 'Global'
+            distribution = CycleParmsGroup.createVariable('Global', np.float64, ('binEdges',))
+            distribution.units = 'kernal distribution'
+            distribution.standard_name = 'Global'
 
-        ## Basins Scale Variables
-        ### Basin distribution
-        distributionBasins = {};
-        for basinIDi in range(len(self.bathymetryAreaDistBasin)):
-            distributionBasins['Basin{:0.0f}'.format(basinIDi)] = CycleParmsGroup.createVariable('basin-{:0.0f}'.format(basinIDi), np.float64, ('binEdges',));
-            distributionBasins['Basin{:0.0f}'.format(basinIDi)].units = 'kernal distribution';
-            distributionBasins['Basin{:0.0f}'.format(basinIDi)].standard_name = 'basin-{:0.0f}'.format(basinIDi);
+            ## Basins Scale Variables
+            ### Basin distribution
+            distributionBasins = {};
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)] = CycleParmsGroup.createVariable('basin-{:0.0f}'.format(basinIDi), np.float64, ('binEdges',));
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)].units = 'kernal distribution';
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)].standard_name = 'basin-{:0.0f}'.format(basinIDi);
 
-        ### BasinID
-        BasinID = CycleParmsGroup.createVariable('BasinID', np.float32, ('BasinID',));
-        BasinID.units = 'ID'; binEdges.long_name = 'BasinID';
+            ### BasinID
+            BasinID = CycleParmsGroup.createVariable('BasinID', np.float32, ('BasinID',));
+            BasinID.units = 'ID'; binEdges.long_name = 'BasinID';
 
-        ### Basin Volume fractions
-        fdvol = CycleParmsGroup.createVariable('fdvol', np.float64, ('BasinID',))
-        fdvol.units = '%'
-        fdvol.standard_name = 'fdvol'
-        fdvol.long_name = "fdvol the sum of which is equal to 100% (of VOC now within the high latitude area)"
+            ### Basin Volume fractions
+            fdvol = CycleParmsGroup.createVariable('fdvol', np.float64, ('BasinID',))
+            fdvol.units = '%'
+            fdvol.standard_name = 'fdvol'
+            fdvol.long_name = "fdvol the sum of which is equal to 100% (of VOC now within the high latitude area)"
 
-        ### Basin Area fractions (sum to 100% - highlatA/AOC)
-        fanoc = CycleParmsGroup.createVariable('fanoc', np.float64, ('BasinID',))
-        fanoc.units = '%'
-        fanoc.standard_name = 'fanoc'
-        fanoc.long_name = "fanoc the sum of which is equal to 100% - highlatA/AOC"
+            ### Basin Area fractions (sum to 100% - highlatA/AOC)
+            fanoc = CycleParmsGroup.createVariable('fanoc', np.float64, ('BasinID',))
+            fanoc.units = '%'
+            fanoc.standard_name = 'fanoc'
+            fanoc.long_name = "fanoc the sum of which is equal to 100% - highlatA/AOC"
 
-        # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
-        highlatlat = CycleParmsGroup.createVariable('highlatlat', None)
-        highlatlat.units = 'degrees'
-        highlatlat.standard_name = 'highlatlat'
+            # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
+            highlatlat = CycleParmsGroup.createVariable('highlatlat', None)
+            highlatlat.units = 'degrees'
+            highlatlat.standard_name = 'highlatlat'
 
-        highlatA = CycleParmsGroup.createVariable('highlatA', None)
-        highlatA.units = 'meters sq'
-        highlatA.standard_name = 'highlatA'
+            highlatA = CycleParmsGroup.createVariable('highlatA', None)
+            highlatA.units = 'meters sq'
+            highlatA.standard_name = 'highlatA'
 
-        VOC = CycleParmsGroup.createVariable('VOC', None)
-        VOC.units = 'meters cubed'
-        VOC.standard_name = 'VOC'
+            VOC = CycleParmsGroup.createVariable('VOC', None)
+            VOC.units = 'meters cubed'
+            VOC.standard_name = 'VOC'
 
-        AOC = CycleParmsGroup.createVariable('AOC', None)
-        AOC.units = 'meters sq'
-        AOC.standard_name = 'AOC'
+            AOC = CycleParmsGroup.createVariable('AOC', None)
+            AOC.units = 'meters sq'
+            AOC.standard_name = 'AOC'
+
+        if self.basinConnectionDefined:
+            basinConnectionBathymetry = BasinConnectionsGroup.createVariable('basinConnectionBathymetry', np.float32, ('BasinID', 'BasinID', 'binEdges'));
+            basinConnectionBathymetry.units = 'km'; basinConnectionBathymetry.long_name = 'km depth';
         
         # Format title
         ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees. NetCDF4 includes carbon cycle bathymetry parameters'.format(self.body, self.resolution)
@@ -1753,32 +1824,58 @@ class Basins():
         basinIDArray[:] = self.BasinIDA;
         areaWeights[:] = self.areaWeights[:,0];
 
-        # Add bathymetry distribution information
-        distribution_whighlat[:] = self.bathymetryAreaDist_wHighlatG;
-        distribution[:] = self.bathymetryAreaDistG;
-        binEdges[:] = self.binEdges[1:];
 
-        # Add basin distribution information
-        for basinIDi in range(len(self.bathymetryAreaDistBasin)):
-            distributionBasins['Basin{:0.0f}'.format(basinIDi)][:] = self.bathymetryAreaDistBasin['Basin{:0.0f}'.format(basinIDi)]
+        if self.BasinParametersDefined:
+            # Add bathymetry distribution information
+            distribution_whighlat[:] = self.bathymetryAreaDist_wHighlatG;
+            distribution[:] = self.bathymetryAreaDistG;
+            binEdges[:] = self.binEdges[1:];
 
-        # Add basin area and volume fractions
-        fdvolValues = np.zeros(len(self.bathymetryAreaDistBasin));
-        fanocValues = np.zeros(len(self.bathymetryAreaDistBasin));
-        for basinIDi in range(len(self.bathymetryAreaDistBasin)):
-            fdvolValues[basinIDi] = self.bathymetryVolFraction['Basin{:0.0f}'.format(basinIDi)];
-            fanocValues[basinIDi] = self.bathymetryAreaFraction['Basin{:0.0f}'.format(basinIDi)];
-        fdvol[:] = fdvolValues;
-        fanoc[:] = fanocValues;
+            # Add basin distribution information
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)][:] = self.bathymetryAreaDistBasin['Basin{:0.0f}'.format(basinIDi)]
 
-        # Add attributes
-        highlatlat[:] = self.highlatlat;
-        highlatA[:] = self.highlatA;
-        VOC[:] = self.VOC;
-        AOC[:] = self.AOC;
+            # Add basin area and volume fractions
+            fdvolValues = np.zeros(len(self.bathymetryAreaDistBasin));
+            fanocValues = np.zeros(len(self.bathymetryAreaDistBasin));
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                fdvolValues[basinIDi] = self.bathymetryVolFraction['Basin{:0.0f}'.format(basinIDi)];
+                fanocValues[basinIDi] = self.bathymetryAreaFraction['Basin{:0.0f}'.format(basinIDi)];
+            fdvol[:] = fdvolValues;
+            fanoc[:] = fanocValues;
+
+            # Add attributes
+            highlatlat[:] = self.highlatlat;
+            highlatA[:] = self.highlatA;
+            VOC[:] = self.VOC;
+            AOC[:] = self.AOC;
+        
+        if self.basinConnectionDefined:
+            basinConnectionBathymetry[:] = self.bathymetryConDist;
+            
 
         # Close the netcdf
-        ncfile.close();        
+        ncfile.close();
+
+        # Report contents of the created netCDF4
+        if verbose:
+            # Open netCDF4
+            ncfile = Dataset(BathyPath, mode='r', format='NETCDF4')
+
+            # Report netCDF4 contents
+            print("Group\tVariable\t\t\tDimensions\t\t\t\tShape")
+            print("--------------------------------------------------------------------------------------")
+            for groupi in ncfile.groups:
+                print(groupi);
+                for variable in ncfile[groupi].variables:
+                    if len(variable) != 20: 
+                        variablePrint = variable.ljust(25)
+                    print("\t"+variablePrint.ljust(25)+
+                        "\t"+str(ncfile[groupi][variable].dimensions).ljust(35)+
+                        "\t"+str(ncfile[groupi][variable].shape).ljust(35))
+            
+            # Close netCDF4
+            ncfile.close();
 
 
 
@@ -1898,55 +1995,6 @@ def hexPolylineLength(coords1, coords2, resolution=1, verbose=True):
 
 
 
-def hexPolylineLengthplt():
-    """
-    the hexPolylineLengthplt function is used to test the implementation of
-    hexPolylineLength. This function shows the calulation of hexagonal like
-    shape sides for increasing latitudes, for hexagons centered at from 0.5
-    to 89.5 degrees latitude and with 1 degree resolution.
-    
-    """
-
-    resolution = 1
-    rlatv = np.arange(resolution/2, 90, resolution)
-    lowerv = []
-    upperv = []
-    leftrightv = []
-    diav = []
-
-
-    #print(rlatv)
-    for rlat in rlatv:
-        leftright =  EC.utils.hexPolylineLength((rlat,rlon), (rlat,rlon+resolution), resolution=resolution, verbose=False)
-
-        upper = EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon), resolution=resolution, verbose=False)
-        lower = EC.utils.hexPolylineLength((rlat,rlon), (rlat-resolution,rlon), resolution=resolution, verbose=False)
-
-        dia = EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon+resolution), resolution=resolution, verbose=False)
-        
-        lowerv.append(lower)
-        upperv.append(upper)
-        leftrightv.append(leftright)
-        diav.append(dia)
-    #print( EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon+resolution)) )
-
-    #print("lower \t", lowerv)
-    #print("upper \t", upperv)
-    #print("leftright \t", leftrightv)
-    #print("dia \t", diav)
-
-
-    import matplotlib.pyplot as plt
-
-    r = 6371;
-    plt.plot(rlatv, r*np.array(lowerv), label="lower");
-    plt.plot(rlatv, r*np.array(upperv), label="upper");
-    plt.plot(rlatv, r*np.array(diav), label="dia");
-    plt.plot(rlatv, r*np.array(leftrightv), label="leftright");
-
-    plt.xlabel("latitude [deg]");
-    plt.ylabel("length [km]");
-    plt.legend();
 
 
 #######################################################################
@@ -1996,3 +2044,59 @@ def polygonAreaOnSphere(vertices, radius=6371e3):
     area = spherical_excess * (radius ** 2)
 
     return area
+
+
+
+
+
+
+
+def hexPolylineLengthplt():
+    """
+    the hexPolylineLengthplt function is used to test the implementation of
+    hexPolylineLength. This function shows the calulation of hexagonal like
+    shape sides for increasing latitudes, for hexagons centered at from 0.5
+    to 89.5 degrees latitude and with 1 degree resolution.
+    
+    """
+
+    resolution = 1
+    rlatv = np.arange(resolution/2, 90, resolution)
+    lowerv = []
+    upperv = []
+    leftrightv = []
+    diav = []
+
+
+    #print(rlatv)
+    for rlat in rlatv:
+        leftright =  EC.utils.hexPolylineLength((rlat,rlon), (rlat,rlon+resolution), resolution=resolution, verbose=False)
+
+        upper = EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon), resolution=resolution, verbose=False)
+        lower = EC.utils.hexPolylineLength((rlat,rlon), (rlat-resolution,rlon), resolution=resolution, verbose=False)
+
+        dia = EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon+resolution), resolution=resolution, verbose=False)
+        
+        lowerv.append(lower)
+        upperv.append(upper)
+        leftrightv.append(leftright)
+        diav.append(dia)
+    #print( EC.utils.hexPolylineLength((rlat,rlon), (rlat+resolution,rlon+resolution)) )
+
+    #print("lower \t", lowerv)
+    #print("upper \t", upperv)
+    #print("leftright \t", leftrightv)
+    #print("dia \t", diav)
+
+
+    import matplotlib.pyplot as plt
+
+    r = 6371;
+    plt.plot(rlatv, r*np.array(lowerv), label="lower");
+    plt.plot(rlatv, r*np.array(upperv), label="upper");
+    plt.plot(rlatv, r*np.array(diav), label="dia");
+    plt.plot(rlatv, r*np.array(leftrightv), label="leftright");
+
+    plt.xlabel("latitude [deg]");
+    plt.ylabel("length [km]");
+    plt.legend();
