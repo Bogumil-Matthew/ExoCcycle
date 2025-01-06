@@ -57,7 +57,6 @@ class BathyMeasured():
     '''
     
     def __init__(self, body=None):
-        self.x = 1;
 
         if body == None:
             print('No body was chosen. Define input body as "Venus" | "Earth" | "Mars" | "Moon"');
@@ -813,11 +812,302 @@ class BathyMeasured():
 
 class BathyRecon():
     '''
-    Used for analogs of planets with active plate tectonics (using Earth reconstructions as proxy).
+    BathyRecon is a class used to create Earth bathymetry reconstructions
+    from a set of models and methods.
+
+    Bathymetry reconstructions are created as desribed in Bogumil et al.
+    (2024) https://doi.org/10.1073/pnas.2400232121. The steps to their
+    creation are as follows:
+    
+    1. We use the age-depth relationship of Crosby and McKenzie to convert
+    the age of the oceanic lithosphere from paleo-isochrons to compute the
+    thermal evolution and subsidence of the oceanic lithosphere.
+    
+    2. Next they are modified by adding isostatically compensated global
+    paleodeep marine sediment distributions using a relationship based on
+    present-day sediment thickness and ocean crust age.
+    
+    3. Continental shelves, flooded continental crust, and deep marine not
+    represented in the plate motion model reconstructions were supplemented
+    by paleo digital elevation maps.
+    
+    4. Bathymetry was then corrected for eustatic sea-level using the long-
+    term Haq87 sea level curve, which is broadly consistent with paleoDEMs
+    shoreline reconstructions.
+    
+    5. Last, the evolved global bathymetry distributions were deformed based
+    on present-day model uncertainty to reproduce accurate global ocean
+    container volumes throughout the reconstruction period.
     '''
 
     def __init__(self):
-        self.x = 1;
+        '''
+
+        Defines
+        --------
+        ESL : NUMPY ARRAY
+            2xn array of sea-level, in m, with respect to present-day in the
+            first row and age in Ma in the second row.
+
+        '''
+
+        # Set the directories to read 
+
+
+        # Read ESL curve 
+        
+
+        # Set the radius of planet
+        self.radiuskm = 6371.0;
+    
+    def run(self, start=80, end=0, deltaTime=5, resolution=1):
+        '''
+        run will make a netCDF4 file which contains
+        bathymetry modeled with thermal subsidence,
+        isostatically compensated sediments, supplemented
+        paleo digital elevation maps, and volume corrected
+        basin bathymetry as outline in Bogumil et al. (2024)
+        https://doi.org/10.1073/pnas.2400232121.
+
+        Parameters
+        -----------
+        start : INT
+            Oldest bathymetry model to create, in Ma.
+        end : INT
+            Youngest bathymetry model to create, in Ma.
+        deltaTime : INT
+            Temporal resolution of bathymetry models, in
+            Myr.
+        resolution : Float
+            Spatial resolution of bathymetry model, in
+            degrees.
+
+        (Re)defines
+        ------------
+
+        
+        '''
+        print('working progress')
+
+    def makeNetCDF4(self):
+        print('working progress')
+
+
+
+    def getDEM(self, age, resolution, fuzzyAge=False):
+        '''
+        getDEM is a method used to read in a topography model
+        from Scotese and Wright (2018) digitized paleoDEMS.
+        A resolution can be specified, but note that the maximum
+        resolution of accompanying DEMs are 1 degree.
+
+
+        Parameters
+        -----------
+        age : INT
+            The age, in Myr, at which that user wants to read a
+            paleoDEM from.
+        resolution : FLOAT
+            The resolution, in degree, at which the user wants to
+            read the paleoDEM at.
+        fuzzyAge : BOOLEAN, optional
+            An option to read paleoDEMs with similar, but not exact
+            ages as represented in age. For example, this allows
+            a user to read in a plaeoDEM marked with ages that are
+            +-0.5 Myr. The default is False.
+
+        Returns
+        --------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m, that now includes
+            thermal subsidence of seafloor subsidence.        
+        
+        '''
+        print('working progress')
+        
+
+
+
+
+
+    def addThermalSub(self, topography, seafloorAge, latitude):
+        '''
+        addThermalSub is a method that calculates and adds first order
+        seafloor depth from thermal subsidence of oceanic lithosphere
+        to a topography model.
+
+        Thermal subsidence is calculated according to Crosby and McKenzie's
+        (2009) relationship (eq. 4) between present-day seafloor depths and
+        ages. https://doi.org/10.1111/j.1365-246X.2009.04224.x 
+
+
+        Parameters
+        -----------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m,  or array of zeros
+            to add seafloor subsidence to.
+        seafloorAge : NUMPY ARRAY
+            nx2n global array of seafloor ages, in Myr. Any area where
+            seafloor ages are not represented -either due to lack of
+            data, the non-existance of seafloor, or non-thermally
+            subsiding seafloor- should be represented with np.nan values. 
+        latitude : NUMPY ARRAY
+            n2xn global array of latitudes corresponding to element locations
+            in input topography and seafloorAge arrays.  
+
+        Returns
+        --------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m, that now includes
+            thermal subsidence of seafloor subsidence.
+        '''
+                
+        # Crosby and Mckenzie (2009) age-depth relationship piecewise logicals
+        age_eq_less_than_75=(seafloorAge<=75)&(seafloorAge>-1)
+        age_eq_less_than_160=(seafloorAge<=160)&(seafloorAge>75)
+        age_greater_than_160=seafloorAge>160
+
+        # Convert age to depth using Crosby and Mckenzie (2009) age-depth
+        # relationship for oceanic crust
+        depth=np.zeros(seafloorAge.shape)
+        depth[age_eq_less_than_75]=2652+324*np.sqrt(seafloorAge[age_eq_less_than_75])
+        depth[age_eq_less_than_160]=5028+5.26*seafloorAge[age_eq_less_than_160]-250*np.sin((seafloorAge[age_eq_less_than_160]-75)/30)
+        depth[age_greater_than_160]=5750
+        depth[seafloorAge<0]=np.nan
+
+        # Modify the input topography with thermal subsidence calculations.
+        topography[~np.isnan(depth)] = depth;
+        
+        ## Return depth
+        return topography
+
+    def getESL(self, topography, age):
+        '''
+        getESL method is used to a obtain the eustatic sealevel
+        change with respect to present-day.
+
+
+        Parameters
+        -----------
+        age : FLOAT
+            The age, in Myr, at which that user wants to read a
+            ESL from.
+
+        Return
+        -------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m, modified with the
+            eustatic change in sealevel.
+        ESL : FLOAT
+            The eustatic change in sealevel, in m, with respect to
+            present day.
+        '''
+        # Read eustatic sealevel curve.
+
+        print("working progress")
+        ## Apply Haq-87 sea-level curve to ocean regions only (Haq_87_SL_temp=0 if opt_Haq87_SL==False)
+        # Inceased sea level is added to depth since depth is positive
+        Haq_87_SL_temp = self.ESL[]
+
+        # Modify the topography with sealevel
+        topography += Haq_87_SL_temp
+
+        return topography, Haq_87_SL_temp  
+
+    def getSed(self, seafloorAge, latitude):
+        '''
+        getSed method finds sediment thicknesses as described in
+        Straume et al. (2019), eq (2a). The function is a 2nd order
+        poly. w/ inverted coefficents for present-day sediment
+        thickness where seafloor age is younger 82 Ma and below 72
+        degrees latitude.
+
+
+        Parameters
+        -----------
+        seafloorAge : NUMPY ARRAY
+            nx2n grid of seafloor ages, in Myr. Elements with np.nan
+            entries represent either no available data or continental
+            area.  
+        latitude : NUMPY ARRAY
+            nx2n grid of latitudes, not colatitudes,
+            in degrees.
+
+        Return
+        -------
+        sedThick : NUMPY ARRAY
+            Seafloor sediment thickness, in meters.
+        
+        '''
+        import copy as cp
+        
+        ## Calculate sediment thickness w/ Straume et al. (2019) age-sediment thickness relationship
+        sedThick = cp.deepcopy(seafloorAge);
+        sedThick[seafloorAge<0]=np.nan;
+        sedThick = np.sqrt(seafloorAge)*(52-2.46*np.abs(latitude)+0.045*np.square(np.abs(latitude)));
+        
+        return sedThick
+
+    def getIsostaticCorrection(self, topography, seafloorAge, latitude):
+        '''
+        getIsostaticCorrection method is used to add the seafloor
+        sediment and the accompanying isostatic correction term for
+        overlaying seafloor sediment and seawater.
+        
+
+        Parameters
+        -----------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m. This should include
+            bathymetry modified with any methods besides addVOCCorrection.
+        seafloorAge : NUMPY ARRAY
+            nx2n global array of seafloor ages, in Myr. Any area where
+            seafloor ages are not represented -either due to lack of
+            data, the non-existance of seafloor, or non-thermally
+            subsiding seafloor- should be represented with np.nan values. 
+        latitude : NUMPY ARRAY
+            n2xn global array of latitudes corresponding to element locations
+            in input seafloorAge arrays.  
+
+        Return
+        -------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m, modified with the
+            seafloor sediment thickness and isostatic compensation
+            correction terms.
+        '''
+        # Calculate sediment thickness
+        sedThickness = self.getSed(seafloorAge, latitude)
+
+        ## Apply Hoggard et al. (2017) isostatic correction using calculated sediment thicknesses
+        # Define densities (Hoggard et al., 2017; Athy, 1930)
+        rho_w   = 1.03e3;      	# [Mg/m^3] Density of water (Hoggard et al., 2017)
+        rho_a   = 3.20e3;       	# [Mg/m^3] Density of Asthenosphere (Hoggard et al., 2017)
+        phi0    = 0.61;         	# [-]  (Athy, 1930)
+        lamda   = 3.9e3;        	# [m]  (Athy, 1930)
+        rho_sg  = 2.65e3;       	# [Mg/m^3] Density of solid grains (Hoggard et al., 2017)
+        def isostaticCorrection(oceanThickness, sedThickness):
+            rho_s=rho_sg + ((phi0*lamda)/oceanThickness)*(rho_w-rho_sg)*(1-np.exp(-1*oceanThickness/lamda));
+            compensatedSedPackages=((rho_a-rho_s)/(rho_a-rho_w))*sedThickness;
+            return oceanThickness-compensatedSedPackages
+        
+        # Add sediment thickness and correction term to topography
+        topography = isostaticCorrection(topography, sedThickness);
+    
+        return topography
+
+
+    def addVOCCorrection(self):
+        print('working progress')
+
+    def saveNetCDF4(self):
+        print('working progress')
+
+
+
+
+
+
 
 
 class BathySynthetic():
@@ -827,6 +1117,18 @@ class BathySynthetic():
 
     def __init__(self):
         self.x = 1;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -1195,6 +1497,29 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
         plt.gca().spines['right'].set_visible(False)
 
     return bathymetryAreaDist, bathymetryVolFrac, bathymetryAreaFrac, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 #######################################################################
