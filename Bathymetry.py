@@ -14,6 +14,7 @@ import os
 from netCDF4 import Dataset
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm # used for progress bar
 from scipy.interpolate import NearestNDInterpolator
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -843,13 +844,17 @@ class BathyRecon():
 
     def __init__(self, directories):
         '''
-
+        
         Parameters
         -----------
         directories : DICTIONARY
             A dictionary containing all necessary directories for the bathymetry
-            reconstruction and analysis.
-
+            reconstruction and analysis. User must define the following directories:
+            (paleoDEMs and oceanLith).
+            The files stored in these directories must follow the below naming convection  
+                paleoDEMs -> [prefix]_[float/int]Ma.nc
+                oceanLith -> [prefix]-[float/int].nc
+            
         Defines
         --------
         self.ESL : NUMPY ARRAY
@@ -881,11 +886,17 @@ class BathyRecon():
         self.paleoDEMsfids = np.array([i for i in os.listdir(self.directories['paleoDEMs']) if not ('.cache' in i) and ('.nc' in i)]);
         ## Set reconstruction ages
         self.paleoDEMsAges = np.array([float(i.split('Ma.nc')[0].split('_')[-1]) for i in self.paleoDEMsfids]);
+
+        # Set paleoDEM information
+        ## Set filenames
+        self.oceanLithfids = np.array([i for i in os.listdir(self.directories['oceanLith']) if not ('.cache' in i) and ('.nc' in i)]);
+        ## Set reconstruction ages
+        self.oceanLithReconAges = np.array([float(i.split('.nc')[0].split('-')[-1]) for i in self.oceanLithfids]);
         
         # Set the radius of planet
         self.radiuskm = 6371.0;
     
-    def run(self, start=80, end=0, deltaTime=5, resolution=1):
+    def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1):
         '''
         run will make a netCDF4 file which contains
         bathymetry modeled with thermal subsidence,
@@ -914,9 +925,67 @@ class BathyRecon():
         '''
         print('working progress')
 
+        # Define all periods to bathymetry for.
+        reconAgeVec = list(np.arange(endMa, startMa+deltaMyr, deltaMyr));
+        # Loop over all periods.
+        for reconAge in (pbar := tqdm(reconAgeVec)):
+            print(reconAge)
+
+            # 1. Add ocean lithosphere age-depth relationship 
+            # 1a. Read ocean lithosphere age grid
+            self.getOceanLithosphereAgeGrid(age=reconAge, resolution=1, fuzzyAge=False);
+            # 1b. Define topography, latitude, and longitude arrays using ocean lithosphere inputs
+            self.lon, self.lat = np.meshgrid(self.oceanLithAge['lon'], self.oceanLithAge['lat']);
+            self.topography = np.empty(shape=np.shape(self.lon));
+            self.topography[:] = np.nan;
+
+            # 1c. Use age grid to calculate seafloor depth from age-depth relationship
+            # Note that bathymetry is represented with positive values.
+            self.topography = self.addThermalSub(self.topography, self.oceanLithAge['z'][:].data, self.lat, verbose=False);
+            
+            # 2. Isostatically compensation (sed thickness, litho age) that also include
+            # sediment thickness.
+            # Note that bathymetry is represented with positive values.
+            self.topography = self.getIsostaticCorrection(self.topography, self.oceanLithAge['z'][:].data, self.lat, self.lon, verbose=False)
+            
+            # 3. Add paleoDEM
+            # 3a. Read paleoDEM (defined as self.paleoDEM)
+            self.getDEM(age=reconAge, resolution=1, fuzzyAge=False);
+
+            # 3b. Add paleoDEM
+            # Note that bathymetry will now be represented with negative values.
+            self.topography = -self.topography;
+            self.topography[np.isnan(self.oceanLithAge['z'][:].data)] = self.paleoDEM['z'][:].data[np.isnan(self.oceanLithAge['z'][:].data)]
+
+            # 4. Add eustatic sea-level curve to represent flooding.
+            self.topography, ESLi = self.getESL(self.topography, reconAge, factor=1, verbose=False);
+
+            # 5. Close the ocean lithospheric age grids netCDF4
+            self.oceanLithAge.close()
+                    
+            # 6. Apply ocean volume correction based on is representation of present-day
+            # bathymetry.
+
+            # 7. Make standardized netCDF4
+
+            # 8. Write standardized netCDF4
+
+            # Report
+            import matplotlib.pyplot as plt
+            fig = plt.figure()
+            # Plot lithosphere ages overlain by coastlines from the paleoDEMS.
+            plt.contourf(self.lon, self.lat, self.topography, levels=100)
+            plt.colorbar(label="Topography [m]")
+            plt.contour(self.lon, self.lat, self.topography, levels=[0], cmap='Set1');
+            plt.xlim([-180,180])
+            plt.ylim([-90,90])
+            plt.axis('equal')
+
+
+
+
     def makeNetCDF4(self):
         print('working progress')
-
 
 
     def getDEM(self, age, resolution, fuzzyAge=False):
@@ -941,21 +1010,21 @@ class BathyRecon():
             a user to read in a plaeoDEM marked with ages that are
             +-0.5 Myr. The default is False.
 
-        Returns
+        Defines
         --------
-        topography : NUMPY ARRAY
+        self.paleoDEM : NUMPY ARRAY
             nx2n global array of topography, in m, that now includes
             thermal subsidence of seafloor subsidence.        
         
         '''
         # Find the paleoDEM file most closely related to the
         # reconstruction period.
-        paleoDEMsfidi = self.directories['paleoDEMs']+"/"+self.paleoDEMsfids[ np.min(np.abs(self.paleoDEMsAges - age))==np.abs(self.paleoDEMsAges - age) ][0]
+        paleoDEMfidi = self.directories['paleoDEMs']+"/"+self.paleoDEMsfids[ np.min(np.abs(self.paleoDEMsAges - age))==np.abs(self.paleoDEMsAges - age) ][0]
 
         # Use gmt to copy the paleoDEM, resampling into the user
         # defined resolution. Note that this code also converts
         # the paleoDEM from grid line to cell registered.
-        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(paleoDEMsfidi,
+        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(paleoDEMfidi,
                                                                 os.getcwd()+'/tempPaleoDEMi.nc',
                                                                 resolution))
         
@@ -966,14 +1035,54 @@ class BathyRecon():
         os.system("rm {}".format(os.getcwd()+'/tempPaleoDEMi.nc'))
 
 
-        print('working progress')
+    def getOceanLithosphereAgeGrid(self, age, resolution, fuzzyAge=False):
+        '''
+        getOceanLithosphereAgeGrid is a method used to read in a
+        ocean lithosphere age models (e.g., Muller et al. 2019).
+        A resolution can be specified, but note that there is a
+        maximum resolution of accompanying your defined reconstructions.
+
+
+        Parameters
+        -----------
+        age : INT
+            The age, in Myr, at which that user wants to read a
+            paleoDEM from.
+        resolution : FLOAT
+            The resolution, in degree, at which the user wants to
+            read the paleoDEM at.
+        fuzzyAge : BOOLEAN, optional
+            An option to read paleoDEMs with similar, but not exact
+            ages as represented in age. For example, this allows
+            a user to read in a plaeoDEM marked with ages that are
+            +-0.5 Myr. The default is False.
+
+        Returns
+        --------
+        ageGrid : NUMPY ARRAY
+            nx2n global array of topography, in m, that now includes
+            thermal subsidence of seafloor subsidence.        
         
+        '''
+        # Find the paleoDEM file most closely related to the
+        # reconstruction period.
+        oceanLithAgefidi = self.directories['oceanLith']+"/"+self.oceanLithfids[ np.min(np.abs(self.oceanLithReconAges - age))==np.abs(self.oceanLithReconAges - age) ][0]
 
+        # Use gmt to copy the paleoDEM, resampling into the user
+        # defined resolution. Note that this code also converts
+        # the paleoDEM from grid line to cell registered.
+        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(oceanLithAgefidi,
+                                                                os.getcwd()+'/tempOecanLithAgei.nc',
+                                                                resolution))
+        
+        # Read paleoDEM
+        self.oceanLithAge = Dataset(os.getcwd()+'/tempOecanLithAgei.nc');
 
+        # Delete paleoDEM
+        os.system("rm {}".format(os.getcwd()+'/tempOecanLithAgei.nc'))
 
-
-
-    def addThermalSub(self, topography, seafloorAge, latitude):
+        
+    def addThermalSub(self, topography, seafloorAge, latitude, verbose=True):
         '''
         addThermalSub is a method that calculates and adds first order
         seafloor depth from thermal subsidence of oceanic lithosphere
@@ -995,8 +1104,10 @@ class BathyRecon():
             data, the non-existance of seafloor, or non-thermally
             subsiding seafloor- should be represented with np.nan values. 
         latitude : NUMPY ARRAY
-            n2xn global array of latitudes corresponding to element locations
+            nx2n global array of latitudes corresponding to element locations
             in input topography and seafloorAge arrays.  
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
 
         Returns
         --------
@@ -1017,14 +1128,30 @@ class BathyRecon():
         depth[age_eq_less_than_160]=5028+5.26*seafloorAge[age_eq_less_than_160]-250*np.sin((seafloorAge[age_eq_less_than_160]-75)/30)
         depth[age_greater_than_160]=5750
         depth[seafloorAge<0]=np.nan
+        depth[np.isnan(seafloorAge)]=np.nan
 
         # Modify the input topography with thermal subsidence calculations.
-        topography[~np.isnan(depth)] = depth;
+        if verbose:
+            print('--------------seafloorAge')
+            print(seafloorAge)
+            print(~np.isnan(seafloorAge))
+            print(seafloorAge.shape)
+            print('--------------depth')
+            print(depth)
+            print(~np.isnan(depth))
+            print(depth.shape)
+            print('--------------topography')
+            print(topography)
+            print(~np.isnan(topography))
+            print(topography.shape)
+
+
+        topography = depth;
         
         ## Return depth
         return topography
 
-    def getESL(self, topography, age):
+    def getESL(self, topography, age, factor=1, verbose=True):
         '''
         getESL method is used to a obtain the eustatic sealevel
         change with respect to present-day.
@@ -1032,16 +1159,26 @@ class BathyRecon():
 
         Parameters
         -----------
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m, modified with the
+            eustatic change in sealevel.
         age : FLOAT
             The age, in Myr, at which that user wants to read a
             ESL from.
+        factor : FLOAT, optional
+            A factor, ranging from 0-1, that describes how much of the
+            eustatic sea-level that will be applied to the reconstruction.
+            This value might be changed from 1 such that the resulting
+            continental area is appropriately flooded. The default is 1.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
 
         Return
         -------
         topography : NUMPY ARRAY
             nx2n global array of topography, in m, modified with the
             eustatic change in sealevel.
-        ESL : FLOAT
+        Haq_87_SL_temp : FLOAT
             The eustatic change in sealevel, in m, with respect to
             present day.
         '''
@@ -1053,8 +1190,11 @@ class BathyRecon():
         Haq_87_SL_temp = self.ESL.loc[np.abs(self.ESL['Ma']-age)<resolution]['m'].values[0]
 
         # Modify the topography with sealevel
-        print("working prgress: Make sure ESL should be added to input topography.")
-        topography += Haq_87_SL_temp
+        topography[~np.isnan(topography)] -= Haq_87_SL_temp*factor;
+
+        # Report
+        if verbose:
+            print("The eustatic sea-level at {0:.0f} Ma with respect to present-day is {1:0.1f} m.".format(age, Haq_87_SL_temp))
 
         return topography, Haq_87_SL_temp  
 
@@ -1092,7 +1232,7 @@ class BathyRecon():
         
         return sedThick
 
-    def getIsostaticCorrection(self, topography, seafloorAge, latitude):
+    def getIsostaticCorrection(self, topography, seafloorAge, latitude, longitude, verbose=True):
         '''
         getIsostaticCorrection method is used to add the seafloor
         sediment and the accompanying isostatic correction term for
@@ -1110,8 +1250,13 @@ class BathyRecon():
             data, the non-existance of seafloor, or non-thermally
             subsiding seafloor- should be represented with np.nan values. 
         latitude : NUMPY ARRAY
-            n2xn global array of latitudes corresponding to element locations
-            in input seafloorAge arrays.  
+            nx2n global array of latitudes corresponding to element locations
+            in input seafloorAge arrays.
+        latitude : NUMPY ARRAY
+            nx2n global array of longitudes corresponding to element locations
+            in input seafloorAge arrays.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
 
         Return
         -------
@@ -1133,12 +1278,28 @@ class BathyRecon():
         def isostaticCorrection(oceanThickness, sedThickness):
             rho_s=rho_sg + ((phi0*lamda)/oceanThickness)*(rho_w-rho_sg)*(1-np.exp(-1*oceanThickness/lamda));
             compensatedSedPackages=((rho_a-rho_s)/(rho_a-rho_w))*sedThickness;
+            print("Check that the output has the correct sign for positive value bathymetry")
             return oceanThickness-compensatedSedPackages
         
         # Add sediment thickness and correction term to topography
-        topography = isostaticCorrection(topography, sedThickness);
+        topographyOut = isostaticCorrection(topography, sedThickness);
+        
+
+        # Plot the change in bathymetry resulting from the sediment/isostatic correction
+        if verbose:
+            # Report
+            import matplotlib.pyplot as plt
+            fig = plt.figure()
+            # Plot lithosphere ages overlain by coastlines from the paleoDEMS.
+            plt.contourf(longitude, latitude, topographyOut-topography)
+            plt.colorbar(label="Change in bathymetry [m]")
+            plt.xlim([-180,180])
+            plt.ylim([-90,90])
+            plt.axis('equal')
+
+
     
-        return topography
+        return topographyOut
 
 
     def addVOCCorrection(self):
@@ -1146,6 +1307,40 @@ class BathyRecon():
 
     def saveNetCDF4(self):
         print('working progress')
+
+    def compareLithosphereAndPaleoDEMRecon(self, age, resolution, fuzzyAge=False):
+        '''
+        compareLithosphereAndPaleoDEMRecon is used to compare the locations
+        where lithosphere ages and paleoDEMS are defined.
+
+
+        Parameters
+        -----------
+        age : INT
+            The age, in Myr, at which that user wants to read a
+            paleoDEM from.
+        resolution : FLOAT
+            The resolution, in degree, at which the user wants to
+            read the paleoDEM at.
+        fuzzyAge : BOOLEAN, optional
+            An option to read paleoDEMs with similar, but not exact
+            ages as represented in age. For example, this allows
+            a user to read in a plaeoDEM marked with ages that are
+            +-0.5 Myr. The default is False.
+        
+        '''
+        import matplotlib.pyplot as plt
+
+        # Read the ocean lithosphere ages and paleoDEM for the reconstruction
+        # period
+        self.getDEM(age, resolution, fuzzyAge=fuzzyAge);
+        self.getOceanLithosphereAgeGrid(age, resolution, fuzzyAge=fuzzyAge);
+
+        # Plot lithosphere ages overlain by coastlines from the paleoDEMS.
+        XX, YY = np.meshgrid(self.oceanLithAge['lon'][:], self.oceanLithAge['lat'][:])
+        #plt.contourf(XX, YY, self.paleoDEM['z'][:].data)
+        plt.contourf(XX, YY, self.oceanLithAge['z'][:].data)
+        plt.contour(XX, YY, self.paleoDEM['z'][:].data, levels=[0], cmap='Set1');
 
 
 
