@@ -13,6 +13,7 @@ from ExoCcycle import utils # type: ignore
 import os
 from netCDF4 import Dataset
 import numpy as np
+import pandas as pd
 from scipy.interpolate import NearestNDInterpolator
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
@@ -840,23 +841,47 @@ class BathyRecon():
     container volumes throughout the reconstruction period.
     '''
 
-    def __init__(self):
+    def __init__(self, directories):
         '''
+
+        Parameters
+        -----------
+        directories : DICTIONARY
+            A dictionary containing all necessary directories for the bathymetry
+            reconstruction and analysis.
 
         Defines
         --------
-        ESL : NUMPY ARRAY
+        self.ESL : NUMPY ARRAY
             2xn array of sea-level, in m, with respect to present-day in the
             first row and age in Ma in the second row.
+        self.radiuskm : FLOAT
+            Earth's radius in km.
 
         '''
 
         # Set the directories to read 
-
+        filenameESL     = '/IncludedData/Haq87_SealevelCurve_Longterm.dat';
+        pathScript      = os.path.dirname(os.path.realpath(__file__));
 
         # Read ESL curve 
-        
+        self.ESL = pd.read_csv(pathScript+filenameESL, sep=' ', names=['Ma','m'], index_col=False)
 
+        # Define the directories dictionary attribute and check that appropriate paths
+        # have been defined.
+        self.directories = directories;
+
+        # Check that all directories exist
+        for path in self.directories:
+            try: os.path.isdir(path)
+            except: print("{} does not exist".format(path))
+
+        # Set paleoDEM information
+        ## Set filenames
+        self.paleoDEMsfids = np.array([i for i in os.listdir(self.directories['paleoDEMs']) if not ('.cache' in i) and ('.nc' in i)]);
+        ## Set reconstruction ages
+        self.paleoDEMsAges = np.array([float(i.split('Ma.nc')[0].split('_')[-1]) for i in self.paleoDEMsfids]);
+        
         # Set the radius of planet
         self.radiuskm = 6371.0;
     
@@ -923,6 +948,24 @@ class BathyRecon():
             thermal subsidence of seafloor subsidence.        
         
         '''
+        # Find the paleoDEM file most closely related to the
+        # reconstruction period.
+        paleoDEMsfidi = self.directories['paleoDEMs']+"/"+self.paleoDEMsfids[ np.min(np.abs(self.paleoDEMsAges - age))==np.abs(self.paleoDEMsAges - age) ][0]
+
+        # Use gmt to copy the paleoDEM, resampling into the user
+        # defined resolution. Note that this code also converts
+        # the paleoDEM from grid line to cell registered.
+        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(paleoDEMsfidi,
+                                                                os.getcwd()+'/tempPaleoDEMi.nc',
+                                                                resolution))
+        
+        # Read paleoDEM
+        self.paleoDEM = Dataset(os.getcwd()+'/tempPaleoDEMi.nc');
+
+        # Delete paleoDEM
+        #os.system("rm {}".format(os.getcwd()+'/tempPaleoDEMi.nc'))
+
+
         print('working progress')
         
 
@@ -1002,14 +1045,15 @@ class BathyRecon():
             The eustatic change in sealevel, in m, with respect to
             present day.
         '''
-        # Read eustatic sealevel curve.
-
-        print("working progress")
+        # Resolution of input (read) eustatic sealevel curve, in myr.
+        resolution = .09;
+        
         ## Apply Haq-87 sea-level curve to ocean regions only (Haq_87_SL_temp=0 if opt_Haq87_SL==False)
         # Inceased sea level is added to depth since depth is positive
-        Haq_87_SL_temp = self.ESL[]
+        Haq_87_SL_temp = self.ESL.loc[np.abs(self.ESL['Ma']-age)<resolution]['m'].values[0]
 
         # Modify the topography with sealevel
+        print("working prgress: Make sure ESL should be added to input topography.")
         topography += Haq_87_SL_temp
 
         return topography, Haq_87_SL_temp  
