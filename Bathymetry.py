@@ -963,7 +963,7 @@ class BathyRecon():
         self.paleoDEM = Dataset(os.getcwd()+'/tempPaleoDEMi.nc');
 
         # Delete paleoDEM
-        #os.system("rm {}".format(os.getcwd()+'/tempPaleoDEMi.nc'))
+        os.system("rm {}".format(os.getcwd()+'/tempPaleoDEMi.nc'))
 
 
         print('working progress')
