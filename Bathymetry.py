@@ -20,6 +20,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap
 import cartopy.crs as ccrs # type: ignore
 from matplotlib.gridspec import GridSpec
+import matplotlib as mpl
+import copy as cp
 
 #######################################################################
 #################### ExoCcycle Create Bathymetries ####################
@@ -740,11 +742,11 @@ class BathyMeasured():
         binEdges.units = 'km'; binEdges.long_name = 'km depth';
 
         distribution_whighlat = ncfile.createVariable('bathymetry-distribution-whighlat-G', np.float64, ('binEdges',))
-        distribution_whighlat.units = 'kernal distribution'
+        distribution_whighlat.units = 'kernel distribution'
         distribution_whighlat.standard_name = 'bathymetry-distribution-whighlat-G'
 
         distribution = ncfile.createVariable('bathymetry-distribution-G', np.float64, ('binEdges',))
-        distribution.units = 'kernal distribution'
+        distribution.units = 'kernel distribution'
         distribution.standard_name = 'bathymetry-distribution-G'
 
         # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
@@ -881,22 +883,44 @@ class BathyRecon():
             try: os.path.isdir(path)
             except: print("{} does not exist".format(path))
 
-        # Set paleoDEM information
+        # Set paleoDEM directory/file information
         ## Set filenames
         self.paleoDEMsfids = np.array([i for i in os.listdir(self.directories['paleoDEMs']) if not ('.cache' in i) and ('.nc' in i)]);
         ## Set reconstruction ages
         self.paleoDEMsAges = np.array([float(i.split('Ma.nc')[0].split('_')[-1]) for i in self.paleoDEMsfids]);
 
-        # Set paleoDEM information
+        # Set paleoDEM directory/file information
         ## Set filenames
         self.oceanLithfids = np.array([i for i in os.listdir(self.directories['oceanLith']) if not ('.cache' in i) and ('.nc' in i)]);
         ## Set reconstruction ages
         self.oceanLithReconAges = np.array([float(i.split('.nc')[0].split('-')[-1]) for i in self.oceanLithfids]);
+
+        # Set etopo directory/file information
+        ## Set filenames
+        self.etopofid = np.array([i for i in os.listdir(self.directories['etopo']) if not ('.cache' in i) and ('.nc' in i)]);
+        if len(self.etopofid) == 1:
+            self.etopofid = self.etopofid[0];
+        else:
+            print("Multiple netCDF4 files were read from the given etopo directory: {0}.\n{1} will be read and used as the present-day topography throughout this analysis".format(self.etopofid, self.etopofid[0]))
+            self.etopofid = self.etopofid[0];
+        print('test')
         
         # Set the radius of planet
         self.radiuskm = 6371.0;
     
-    def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1):
+        # Ocean basin volume.
+        constVOC = True;
+        if constVOC:
+            print("Ocean basin volume is constant through reconstruction period.")
+            self.VOCValues      = np.array([1.335e18]);
+            self.VOCAgeValues   = np.arange(0,85,5);
+        else:
+            # Defined as in Bogumil et al. (2024) https://doi.org/10.1073/pnas.2400232121
+            pass
+
+
+    
+    def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1, verbose=True):
         '''
         run will make a netCDF4 file which contains
         bathymetry modeled with thermal subsidence,
@@ -917,6 +941,9 @@ class BathyRecon():
         resolution : Float
             Spatial resolution of bathymetry model, in
             degrees.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
 
         (Re)defines
         ------------
@@ -929,8 +956,6 @@ class BathyRecon():
         reconAgeVec = list(np.arange(endMa, startMa+deltaMyr, deltaMyr));
         # Loop over all periods.
         for reconAge in (pbar := tqdm(reconAgeVec)):
-            print(reconAge)
-
             # 1. Add ocean lithosphere age-depth relationship 
             # 1a. Read ocean lithosphere age grid
             self.getOceanLithosphereAgeGrid(age=reconAge, resolution=1, fuzzyAge=False);
@@ -962,31 +987,91 @@ class BathyRecon():
 
             # 5. Close the ocean lithospheric age grids netCDF4
             self.oceanLithAge.close()
-                    
-            # 6. Apply ocean volume correction based on is representation of present-day
+
+            # 6. Create global area weights array
+            if reconAge == reconAgeVec[0]:
+                areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+                self.areaWeights = areaWeights;
+            
+            # 7. Define bathymetry
+            self.bathymetry = cp.deepcopy(self.topography);
+            self.bathymetry[self.bathymetry>0] = np.nan;
+            self.bathymetry = (-1)*self.bathymetry
+
+            # 8. Apply ocean volume correction based on is representation of present-day
             # bathymetry.
+            # 8a. Set the ocean volume expected at the reconstruction period.
+            self.VOCi = self.VOCfnc(reconAge);
 
-            # 7. Make standardized netCDF4
+            # 8b. Apply the ocean volume correction based on the misfit of present-day
+            # distributions and the expected paleo ocean volume.
+            if reconAge == 0:
+                self.topography, self.etopoKernelDis = self.addVOCCorrection(reconAge, self.topography, self.VOCi, resolution=1, verbose=True)
+            else:
+                try:
+                    # If self.etopoKernelDis was defined (i.e., the present-day analysis was previously done) then
+                    # the volume correction will be applied to the topography model.
+                    self.etopoKernelDis
 
-            # 8. Write standardized netCDF4
+                    # Apply the ocean volume correction
+                    self.topography, self.etopoKernelDis = self.addVOCCorrection(reconAge, self.topography, self.VOCi, resolution=1, verbose=False)
+                except:
+                    # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
+                    pass
+            
+
+            # 9. Make standardized netCDF4
+
+            # 10. Write standardized netCDF4
 
             # Report
-            import matplotlib.pyplot as plt
-            fig = plt.figure()
-            # Plot lithosphere ages overlain by coastlines from the paleoDEMS.
-            plt.contourf(self.lon, self.lat, self.topography, levels=100)
-            plt.colorbar(label="Topography [m]")
-            plt.contour(self.lon, self.lat, self.topography, levels=[0], cmap='Set1');
-            plt.xlim([-180,180])
-            plt.ylim([-90,90])
-            plt.axis('equal')
+            '''
+            if verbose:
+                blues_cm = mpl.colormaps['Blues'].resampled(100)
+                self.highlatlat = 90
+                print("FIXME:")
+                # FIXME: Need to change the plotted values from bathymetryAreaDist_wHighlat to bathymetryAreaDist_wHighlat
+                utils.plotGlobalwHist(self.lat, self.lon, self.bathymetry,
+                                     self.binEdges, self.bathymetryAreaDist_wHighlat, self.bathymetryAreaDist, self.highlatlat,
+                                     outputDir = os.getcwd(),
+                                     fidName = "plotGlobal-Test.png",
+                                     cmapOpts={"cmap":blues_cm,
+                                               "cbar-title":"cbar-title",
+                                                "cbar-range":[np.nanmin(np.nanmin(self.bathymetry)),
+                                                              np.nanmean(self.bathymetry)+2*np.nanstd(self.bathymetry)]},
+                                     pltOpts={"valueType": "Bathymetry",
+                                              "valueUnits": "m",
+                                              "plotTitle":"",
+                                              "plotZeroContour":False},
+                                     saveSVG=False,
+                                     savePNG=False)
+            '''
 
+    def VOCfnc(self, age):
+        """
+        VOCfnc returns the expected ocean basin volume at some period
+        in Earth history.
 
+        Parameters
+        -----------
+        age : INT
+            The age of at which to return an expected global
+            ocean basin volume.
 
+        Return
+        -------
+        VOC : FLOAT
+            The volume of the global ocean basin system, in m3, at input
+            time age.
+
+        """
+        if len(self.VOCValues) == 1:
+            return self.VOCValues[0];
+        else:
+            return self.VOCValues[self.VOCAgeValues == age];
 
     def makeNetCDF4(self):
         print('working progress')
-
 
     def getDEM(self, age, resolution, fuzzyAge=False):
         '''
@@ -1034,7 +1119,6 @@ class BathyRecon():
         # Delete paleoDEM
         os.system("rm {}".format(os.getcwd()+'/tempPaleoDEMi.nc'))
 
-
     def getOceanLithosphereAgeGrid(self, age, resolution, fuzzyAge=False):
         '''
         getOceanLithosphereAgeGrid is a method used to read in a
@@ -1050,7 +1134,7 @@ class BathyRecon():
             paleoDEM from.
         resolution : FLOAT
             The resolution, in degree, at which the user wants to
-            read the paleoDEM at.
+            read the ocean lithospheric age grid at.
         fuzzyAge : BOOLEAN, optional
             An option to read paleoDEMs with similar, but not exact
             ages as represented in age. For example, this allows
@@ -1081,7 +1165,6 @@ class BathyRecon():
         # Delete paleoDEM
         os.system("rm {}".format(os.getcwd()+'/tempOecanLithAgei.nc'))
 
-        
     def addThermalSub(self, topography, seafloorAge, latitude, verbose=True):
         '''
         addThermalSub is a method that calculates and adds first order
@@ -1301,8 +1384,163 @@ class BathyRecon():
     
         return topographyOut
 
+    def addVOCCorrection(self, age, topography, VOCTarget, resolution, verbose=True):
+        '''
+        addVOCCorrection 
+        FIXME: add appropriate description.
+        
+        Parameters
+        -----------
+        age : INT
+            Period of the reconstruction, in Ma. If age is 0 (present-day)
+            then the correction distribution will be calculated as well.
+            Note that the correction distribution needs to be calculated
+            for the VOC correction to be applied at other periods beyond
+            present-day.
+        topography : NUMPY ARRAY
+            nx2n global array of topography, in m,  or array of zeros
+            to add seafloor subsidence to.
+        VOCTarget : FLOAT
+            The target ocean basin volume to reconstruct. Bathymetry
+            distributions will be modified based on present-day mismatch
+            in modeling the bathtmetry distribution.
+        resolution : FLOAT
+            The resolution, in degree, at which the user wants to
+            read the present-day topography model at.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+        
+        '''
+        # Set the global ocean basin volume for 
+        #VOCTarget = self.VOCfnc(age);
 
-    def addVOCCorrection(self):
+
+        def plotFnc(bathymetryAreaDist, bathymetryAreaDistEtopo, binEdges, areaTotal, areaTotalEtopo, volTotal, volTotalEtopo, bathymetry, etopo):
+            '''
+            plotFnc is used to plot the difference between the model bathymetry
+            and actual present-day bathymetry. Positive values mean the model
+            overrepresents bathymetry at a given depth.
+
+            '''
+            ## Set up the Mollweide projection
+            fig = plt.figure(figsize=(8, 8))
+            gs = GridSpec(2, 1, height_ratios=[3, 1]);  # 2 rows, 1 column, with the first row 3 times taller
+
+            ax1 = fig.add_subplot(gs[0], projection=ccrs.Mollweide());
+
+            ## Add the plot using pcolormesh
+            bathymetry[np.isnan(bathymetry)] = 0;
+            etopo[np.isnan(etopo)] = 0;
+            bathymetry[bathymetry!=0] = bathymetry[bathymetry!=0]/bathymetry[bathymetry!=0];
+            etopo[etopo!=0] = etopo[etopo!=0]/etopo[etopo!=0];
+            difference = bathymetry-etopo;
+            # 0     Representing bathymetry.
+            # -1    measured bathymetry was not modeled.
+            # 1     bathymetry was modeled where no measured bathymetry exists.
+            mesh = ax1.scatter(self.lon[difference!=0], self.lat[difference!=0], c=difference[difference!=0], s=1, transform=ccrs.PlateCarree(), cmap='RdGy');
+            #print( "np.sum(difference[difference!=0])", np.sum(difference[difference!=0]))
+            #print( "np.nansum(difference[difference!=0]*self.areaWeights)", np.nansum(difference*self.areaWeights))
+            #print( "deltaArea", 100*(np.nansum(bathymetry*self.areaWeights) -np.nansum(etopo*self.areaWeights))/np.nansum(etopo*self.areaWeights))
+
+            ## Add a colorbar
+            cbar = plt.colorbar(mesh, ax=ax1, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+            cbar.ax.tick_params(labelsize=10, )  # Adjust the size of colorbar ticks
+            cbar.ax.set_xticks([-1,1])
+            cbar.ax.set_xticklabels(['Bathymetry\nMissing from Model', 'Bathymetry\nMissing from Etopo']) 
+
+            ## Add gridlines
+            ax1.gridlines()
+
+            ## Set a title
+            plt.title("Earth (Modeled/Measured) Bathymetry")
+
+            ## Make histogram plot
+            ax2 = fig.add_subplot(gs[1]);
+
+            factor1 = .2
+            factor2 = .25
+            plt.bar(x=binEdges[1:]-(factor2/2)*np.diff(binEdges),
+                    height=bathymetryAreaDistEtopo,
+                    width=factor1*np.diff(binEdges),
+                    label= "Mismatch")
+            plt.bar(x=binEdges[1:]+(factor2/2)*np.diff(binEdges),
+                    height=bathymetryAreaDist,
+                    width=factor1*np.diff(binEdges),
+                    label= "Mismatch")
+            
+            plt.plot([-1, 8], [0, 0], 'k', linewidth=.5)
+
+            # Plot annoation of total area and volume difference
+            deltaAOC = 100*(areaTotal-areaTotalEtopo)/areaTotalEtopo;
+            deltaVOC = 100*(volTotal-volTotalEtopo)/volTotalEtopo;
+
+
+            bbox = dict(boxstyle="round", fc="0.9", color='blue')
+            plt.annotate(
+                f"$\Delta$AOC = {deltaAOC:.1f}%\n$\Delta$VOC = {deltaVOC:.1f}%",
+                fontsize=12,
+                xy=(.1, 20),
+                bbox=bbox)
+
+            # ticks
+            plt.xticks(binEdges[1:]);
+            plt.yticks(np.arange(0,35,5));
+
+            # Labels
+            plt.legend();
+            plt.title("(Modeled - Measured) Bathymetry Distribution")
+            plt.xlabel("Bathymetry Bins [km]");
+            plt.ylabel("Seafloor Area [%]\nOverrepresented in Model");
+
+            # figure format
+            plt.gca().spines['top'].set_visible(False)
+            plt.gca().spines['right'].set_visible(False)
+            plt.xlim([0,7])
+
+        # If the bathymetry is representing present day then calculate
+        # the correction distribution to apply to all later paleo
+        # bathymetry reconstructions.
+        if age == 0:
+            # Create copy of the present-day topography that is a the same
+            # resolution as the reconstruction models.
+            os.system("gmt grdsample {0} -G{1} -I{2} -Rd".format(self.directories['etopo']+"/"+self.etopofid,
+                                                                    os.getcwd()+'/tempetopo.nc',
+                                                                    resolution))
+            # Read etopo1 and define etopo bathymetry
+            etopo = Dataset(os.getcwd()+'/tempetopo.nc')
+            etopobathymetry = cp.deepcopy(etopo['z'][:].data);
+            etopobathymetry[etopobathymetry>0] = np.nan;
+            etopobathymetry = (-1)*etopobathymetry
+
+
+            # Delete paleoDEM
+            os.system("rm {}".format(os.getcwd()+'/tempetopo.nc'))
+
+            # Create bathymetry histogram (for model at 0 Ma)
+            self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+
+            # Create bathymetry histogram (for etopo)
+            self.bathymetryAreaDistEtopo, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(etopobathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+
+            # Mismatch between modeled and measured bathymetry
+            self.bathymetryAreaDistMismatch = (self.bathymetryAreaDist - self.bathymetryAreaDistEtopo)
+
+            # Report
+            if verbose:
+                plotFnc(self.bathymetryAreaDistMismatch,
+                        self.bathymetryAreaDistMismatch,
+                        self.binEdges,
+                        np.nansum(self.areaWeights[~np.isnan(self.bathymetry)]),
+                        np.nansum(self.areaWeights[~np.isnan(etopobathymetry)]),
+                        np.nansum(self.bathymetry*self.areaWeights),
+                        np.nansum(etopobathymetry*self.areaWeights),
+                        self.bathymetry,
+                        etopobathymetry)
+
+
+
+        return 0, 0
+
         print('working progress')
 
     def saveNetCDF4(self):
