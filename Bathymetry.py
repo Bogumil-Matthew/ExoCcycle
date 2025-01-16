@@ -2003,7 +2003,7 @@ class BathyRecon():
             ## Use volume fraction of ocean to determine the fraction of ocean volume correction that should be applied to each basin
             totalVolRes = (np.sum(volBasin)-VOCTarget)
 
-            ## Total basin volume fractions
+            ## Total basin volume/area fractions
             volBasinFrac = volBasin/np.sum(volBasin);
             
             ## Calculate percents to add to each bin then plot
@@ -2016,7 +2016,6 @@ class BathyRecon():
             randomDepthIndBin = {};
 
             for i in range(self.basinCnt):
-                #depthBinLogical   =np.zeros(shape=(len(self.binEdges),len(bathymetry[self.basins.BasinIDA==i])));
                  
                 for j in range(len(self.binEdges[1:])):
 
@@ -2028,7 +2027,7 @@ class BathyRecon():
                     if j < len(self.binEdges):      # Contains depths between current bin and next bin
                         depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&((1e-3)*bathymetry<self.binEdges[j+1])&(self.basins.BasinIDA==i) );
                     else:                        # The last bin which contains depths below bins_in(end)
-                        depthBinLogical =   np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
+                        depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
                     
                     verbose2 = False
                     if verbose2:
@@ -2065,8 +2064,6 @@ class BathyRecon():
             
                 ## Define the volume reduction required in basini.
                 volReduction = totalVolRes*volBasin[basini]
-
-                ## Set values 
             
                 ## Iterate over bin depths
                 if verbose:
@@ -2080,46 +2077,70 @@ class BathyRecon():
 
                         ## Ocean volume to be removed through adding shallower depths than the current bin.
                         sxbin_p_rm = sxbin_p[0:j];
-                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )*\
-                            (2-np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
+                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )/\
+                            (np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
                         ## Ocean volume to be added through adding deeper depths than the current bin.
                         sxbin_p_add = sxbin_p[j+1:];
-                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )*\
+                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )/\
                             np.abs(np.sum( sxbin_p_add[sxbin_p_add<0])/sxbin_p[j]);
                         ## Ocean volume to be removed/added through adding shallower/deeper bins than the current bin
                         bini_redis_faction = np.append(np.append(bini_redis_faction1,np.array(0.0)),bini_redis_faction2);
 
+                        ## Set maximum percentage of indices that can be changed in a bin that will have bathymetry
+                        ## removed from it.
+                        maxBin_p_Change = sxbin_p[j];
+
                         if verbose:
-                            print(j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
+                            print('\n\n\n',j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
 
                         ## Apply volume correction to each basini bin i.                       
                         binVolume = 0.0;           # (re)set binVolume each time we change start bin (every j interation)
                         jjj=0;                     # (re)set jjj each time we change start bin (every j interation)
+                        areaChangeOut = 0.0;
                         for jj in range(len(bini_redis_faction)):
                             if bini_redis_faction[jj] > 0:
                                 # Calculate how much ocean volume residual is
                                 # represented in the lacking bin (bini_vol_residual)
                                 bini_vol_residual = totalVolRes*volBasinFrac[basini]*bin_redis_faction[j]*bini_redis_faction[jj];
                                 volumeChange = 0.0;
-                                
+                                areaChangeIn = 0.0;
+
                                 # Note1: this chooses the option for how the bathymetry
                                 # should be redistrbuted to other bins.
                                 # Note2: Also, this code will not excute unless the
                                 # residual in bin (jj) constitutes <1% of the total
-                                # residual between constant ocean volume and model.
+                                # basin's residual between constant ocean volume and
+                                # model.
                                 opt_max_vol_trans = True;
-                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*1e-2):
+                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*volBasinFrac[basini]*1e-2):
                                     max_ind = np.shape(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])])[0];
 
                                     while volumeChange < bini_vol_residual:
-                                        # (WORKING PROGRESS)
                                         # Reached ~100% of ocean volume at studied time or max indices at depth were move to other depths 
                                         opt_redis_cutoff = False;
                                         if opt_redis_cutoff & (np.nansum(bathymetry*self.areaWeights) < VOCTarget):
                                             # print("Target global ocean volume is now predicted to be accurate for time. Some basins might be lacking basin volume representation compared to others.")
+                                            # print("exit 1")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
                                         elif jjj == (max_ind-1):
                                             # print("Max indices were reached. No more redistributions can be done to reconcile ocean volume.")
+                                            # print("exit 2")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
+                                            break
+                                        elif areaBasin[basini]*(maxBin_p_Change/100) < areaChangeOut:
+                                            # print("Max bathymetry area was reached. Such that further removal of bathymetry from bin {0}-{1} would lead to an underestimation of bin {0}-{1} area".format(self.binEdges[j], self.binEdges[j+1]))
+                                            # print("exit 4")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
+                                            break
+                                        elif areaBasin[basini]*(np.abs(sxbin_p[jj])/100) < areaChangeIn:
+                                            # print("Max bathymetry area was reached in adding bin. Such that further adding of bathymetry to bin {0}-{1} would lead to an underestimation of bin {0}-{1} area".format(self.binEdges[jj], self.binEdges[jj+1]))
+                                            # print("exit 5")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
                                         
                                         # Select random ind from random ind vector - This value will then be changed
@@ -2129,19 +2150,34 @@ class BathyRecon():
 
                                         # New depth - Choose depth randomly within bin or at maximum depth
                                         bins_in_cal = np.hstack((1e3*self.binEdges, 1e3*self.binEdges[-1]-1))
-                                        new_depth = np.abs(np.array([bins_in_cal[jj]+1, bins_in_cal[jj-1]]));
-
+                                        new_depth   = np.abs(np.array([bins_in_cal[jj+1]-1, bins_in_cal[jj]+1]));
+                                        
                                         # Find the min and max volume changes to new bin
-                                        #delta_vol = np.abs(self.areaWeights[self.basins.BasinIDA==basini][ind[0],ind[1]]*(np.abs(bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]])-new_depth));
                                         delta_vol = np.abs(self.areaWeights[ind[0],ind[1]]*(np.abs(bathymetry[ind[0],ind[1]])-new_depth));
 
-                                        # Set new depth to the maximum volume change in water column
-                                        new_depth = new_depth[np.max(delta_vol)==delta_vol];
+                                        # Set new depth such that ocean volume is minimized
+                                        if new_depth[0]<np.abs(bathymetry[ind[0],ind[1]]):
+                                            # New depth is shallower than old depth
+                                            new_depth = new_depth[np.max(delta_vol)==delta_vol];
+                                        if new_depth[0]>np.abs(bathymetry[ind[0],ind[1]]):
+                                            # New depth is deeper than old depth
+                                            new_depth = new_depth[np.min(delta_vol)==delta_vol];
+
+                                        # Report
+                                        if volumeChange==0:
+                                            print("Old depth {}, New depth {}, volumeChange {}, np.max(delta_vol) {}, bini_vol_residual {}".format(bathymetry[ind[0],ind[1]],
+                                                                                                                                                new_depth,
+                                                                                                                                                volumeChange,
+                                                                                                                                                np.max(delta_vol),
+                                                                                                                                                bini_vol_residual))
 
                                         # Use the maximum volume change to new bin as new depth
                                         if volumeChange+np.max(delta_vol)<=bini_vol_residual:
                                             # Append the volume change to lacking bin
                                             volumeChange = volumeChange+np.max(delta_vol);
+                                            # Append the area changed
+                                            areaChangeOut   = areaChangeOut+self.areaWeights[ind[0],ind[1]];
+                                            areaChangeIn    = areaChangeIn+self.areaWeights[ind[0],ind[1]];
                                             # Append the depth to that of the lacking bin
                                             # FIXME: Check if this value should be positive of negative.
                                             #bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]]= np.abs(new_depth);
@@ -2152,6 +2188,9 @@ class BathyRecon():
                                             # Scenario where depth cannot be added with
                                             # out exceeding the residual volume
                                             # correction for that bin
+                                            # print("exit 3")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
 
                                 # Tracks the amount of ocean volume removed
@@ -2230,7 +2269,6 @@ class BathyRecon():
             randomDepthIndBin = {};
 
             for i in range(self.basinCnt):
-                #depthBinLogical   =np.zeros(shape=(len(self.binEdges),len(bathymetry[self.basins.BasinIDA==i])));
                  
                 for j in range(len(self.binEdges[1:])):
 
@@ -2242,7 +2280,7 @@ class BathyRecon():
                     if j < len(self.binEdges):      # Contains depths between current bin and next bin
                         depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&((1e-3)*bathymetry<self.binEdges[j+1])&(self.basins.BasinIDA==i) );
                     else:                        # The last bin which contains depths below bins_in(end)
-                        depthBinLogical =   np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
+                        depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
                     
                     verbose2 = False
                     if verbose2:
@@ -2279,42 +2317,42 @@ class BathyRecon():
             
                 ## Define the volume reduction required in basini.
                 volReduction = totalVolRes*volBasin[basini]
-
-                ## Set values 
             
                 ## Iterate over bin depths
                 if verbose:
                     print("Basin ", basini)
                 for j in range(len(self.binEdges[1:])):
-
-                    ## Find the amount of ocean volume to be transfer between bin j (bins with
-                    ## excess ocean volume/area) and other bins (bins lacking ocean area representation).
-                    if sxbin_p[j] > 0:
                         ## If bin has excess ocean area/volume
 
                         ## Ocean volume to be removed through adding shallower depths than the current bin.
                         sxbin_p_rm = sxbin_p[0:j];
-                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )*\
-                            (2-np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
+                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )/\
+                            (np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
                         ## Ocean volume to be added through adding deeper depths than the current bin.
                         sxbin_p_add = sxbin_p[j+1:];
-                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )*\
+                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )/\
                             np.abs(np.sum( sxbin_p_add[sxbin_p_add<0])/sxbin_p[j]);
                         ## Ocean volume to be removed/added through adding shallower/deeper bins than the current bin
                         bini_redis_faction = np.append(np.append(bini_redis_faction1,np.array(0.0)),bini_redis_faction2);
 
+                        ## Set maximum percentage of indices that can be changed in a bin that will have bathymetry
+                        ## removed from it.
+                        maxBin_p_Change = sxbin_p[j];
+
                         if verbose:
-                            print(j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
+                            print('\n\n\n',j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
 
                         ## Apply volume correction to each basini bin i.                       
                         binVolume = 0.0;           # (re)set binVolume each time we change start bin (every j interation)
                         jjj=0;                     # (re)set jjj each time we change start bin (every j interation)
+                        areaChangeOut = 0.0;
                         for jj in range(len(bini_redis_faction)):
                             if bini_redis_faction[jj] > 0:
                                 # Calculate how much ocean volume residual is
                                 # represented in the lacking bin (bini_vol_residual)
                                 bini_vol_residual = totalVolRes*volBasinFrac[basini]*bin_redis_faction[j]*bini_redis_faction[jj];
                                 volumeChange = 0.0;
+                                areaChangeIn = 0.0;
                                 
                                 # Note1: this chooses the option for how the bathymetry
                                 # should be redistrbuted to other bins.
@@ -2322,20 +2360,36 @@ class BathyRecon():
                                 # residual in bin (jj) constitutes <1% of the total
                                 # residual between constant ocean volume and model.
                                 opt_max_vol_trans = True;
-                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*1e-2):
+                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*volBasinFrac[basini]*1e-2):
                                     max_ind = np.shape(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])])[0];
 
                                     while volumeChange < bini_vol_residual:
-                                        # (WORKING PROGRESS)
                                         # Reached ~100% of ocean volume at studied time or max indices at depth were move to other depths 
                                         opt_redis_cutoff = False;
-                                        if opt_redis_cutoff & (np.nansum(bathymetry*self.areaWeights) < self.VOCTarget):
+                                        opt_redis_cutoff = False;
+                                        if opt_redis_cutoff & (np.nansum(bathymetry*self.areaWeights) < VOCTarget):
                                             # print("Target global ocean volume is now predicted to be accurate for time. Some basins might be lacking basin volume representation compared to others.")
-                                            print("test1")
+                                            # print("exit 1")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
                                         elif jjj == (max_ind-1):
                                             # print("Max indices were reached. No more redistributions can be done to reconcile ocean volume.")
-                                            print("test2")
+                                            # print("exit 2")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
+                                            break
+                                        elif areaBasin[basini]*(maxBin_p_Change/100) < areaChangeOut:
+                                            # print("Max bathymetry area was reached. Such that further removal of bathymetry from bin {0}-{1} would lead to an underestimation of bin {0}-{1} area".format(self.binEdges[j], self.binEdges[j+1]))
+                                            # print("exit 4")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
+                                            break
+                                        elif areaBasin[basini]*(np.abs(sxbin_p[jj])/100) < areaChangeIn:
+                                            # print("Max bathymetry area was reached in adding bin. Such that further adding of bathymetry to bin {0}-{1} would lead to an underestimation of bin {0}-{1} area".format(self.binEdges[jj], self.binEdges[jj+1]))
+                                            # print("exit 5")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
                                         
                                         # Select random ind from random ind vector - This value will then be changed
@@ -2345,19 +2399,34 @@ class BathyRecon():
 
                                         # New depth - Choose depth randomly within bin or at maximum depth
                                         bins_in_cal = np.hstack((1e3*self.binEdges, 1e3*self.binEdges[-1]-1))
-                                        new_depth = np.abs(np.array([bins_in_cal[jj]+1, bins_in_cal[jj-1]]));
-
+                                        new_depth   = np.abs(np.array([bins_in_cal[jj+1]-1, bins_in_cal[jj]+1]));
+                                        
                                         # Find the min and max volume changes to new bin
-                                        #delta_vol = np.abs(self.areaWeights[self.basins.BasinIDA==basini][ind[0],ind[1]]*(np.abs(bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]])-new_depth));
                                         delta_vol = np.abs(self.areaWeights[ind[0],ind[1]]*(np.abs(bathymetry[ind[0],ind[1]])-new_depth));
 
-                                        # Set new depth to the maximum volume change in water column
-                                        new_depth = new_depth[np.max(delta_vol)==delta_vol];
+                                        # Set new depth such that ocean volume is minimized
+                                        if new_depth[0]<np.abs(bathymetry[ind[0],ind[1]]):
+                                            # New depth is shallower than old depth
+                                            new_depth = new_depth[np.max(delta_vol)==delta_vol];
+                                        if new_depth[0]>np.abs(bathymetry[ind[0],ind[1]]):
+                                            # New depth is deeper than old depth
+                                            new_depth = new_depth[np.min(delta_vol)==delta_vol];
+
+                                        # Report
+                                        if volumeChange==0:
+                                            print("Old depth {}, New depth {}, volumeChange {}, np.max(delta_vol) {}, bini_vol_residual {}".format(bathymetry[ind[0],ind[1]],
+                                                                                                                                                new_depth,
+                                                                                                                                                volumeChange,
+                                                                                                                                                np.max(delta_vol),
+                                                                                                                                                bini_vol_residual))
 
                                         # Use the maximum volume change to new bin as new depth
                                         if volumeChange+np.max(delta_vol)<=bini_vol_residual:
                                             # Append the volume change to lacking bin
                                             volumeChange = volumeChange+np.max(delta_vol);
+                                            # Append the area changed
+                                            areaChangeOut   = areaChangeOut+self.areaWeights[ind[0],ind[1]];
+                                            areaChangeIn    = areaChangeIn+self.areaWeights[ind[0],ind[1]];
                                             # Append the depth to that of the lacking bin
                                             # FIXME: Check if this value should be positive of negative.
                                             #bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]]= np.abs(new_depth);
@@ -2368,7 +2437,9 @@ class BathyRecon():
                                             # Scenario where depth cannot be added with
                                             # out exceeding the residual volume
                                             # correction for that bin
-                                            print("test3")
+                                            # print("exit 3")
+                                            # print("np.nansum(bathymetry*self.areaWeights)", np.nansum(bathymetry*self.areaWeights))
+                                            # print("VOCTarget", VOCTarget)
                                             break
 
                                 # Tracks the amount of ocean volume removed
