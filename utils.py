@@ -818,7 +818,7 @@ class Basins():
 
 
 
-    def createCommunityNodeColors(self):
+    def createCommunityNodeColors(self, verbose=False):
         """
         createCommunityNodeColors method sets colors associated
         with different community nodes (e.g., basins in this case).
@@ -829,17 +829,34 @@ class Basins():
         node_colors : PYTHON LIST
             A list of hex code colors that correspond to a node's
             community.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
         """
-        # Define colors for basin identification.
-        colors = [mpl.colors.to_hex(i) for i in mpl.colormaps["tab20b"].colors];
-        colors2 = [mpl.colors.to_hex(i) for i in mpl.colormaps["tab20c"].colors]
-        for i in range(len(colors2)):
-            colors.append(colors2[i])
-
-        node_colors = [];
-
         # Get basin IDs from network object.
         tmpValues = nx.get_node_attributes(self.G, "basinID");
+
+        # Record the count of basins
+        basinIDi = 0
+        for i in range(len(nx.get_node_attributes(self.G, "basinID"))):
+            if int(tmpValues[i]["basinID"]) > basinIDi:
+                basinIDi = int(tmpValues[i]["basinID"]);
+        if verbose:
+            print("There are {0:0.0f} basinIDs".format(basinIDi+1))
+
+        # Define colors for basin identification.
+        if basinIDi+1 <= 40:
+            colors = [mpl.colors.to_hex(i) for i in mpl.colormaps["tab20b"].colors];
+            colors2 = [mpl.colors.to_hex(i) for i in mpl.colormaps["tab20c"].colors]
+            for i in range(len(colors2)):
+                colors.append(colors2[i])
+        else:
+            # Resample a spectral colormap to the exact size of the basin count.
+            colormap = mpl.colormaps["Spectral"];
+            colormap = colormap.resampled(basinIDi+1);
+            # Convert resampled spectral colormap to hexidecimal codes.
+            colors = [mpl.colors.to_hex(i) for i in colormap(np.linspace(0, 1, basinIDi+1))[:, 0:3] ];
+
+        node_colors = [];
 
         # Iterate through all bathymetry nodes.
         for i in range(len(nx.get_node_attributes(self.G, "basinID"))):
@@ -902,6 +919,8 @@ class Basins():
         ## Set projection type
         if pltOpts['projection'] == "Mollweide":
             projectionType = ccrs.Mollweide();
+        elif pltOpts['projection'] == "Miller":
+            projectionType = ccrs.Miller();
         elif pltOpts['projection'] == "Robinson":
             projectionType = ccrs.Robinson();
         elif pltOpts['projection'] == "Mercator":

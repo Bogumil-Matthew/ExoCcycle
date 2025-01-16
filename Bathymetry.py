@@ -203,7 +203,6 @@ class BathyMeasured():
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
 
-
     def readTopo(self, data_dir, new_resolution = 1, verbose=True):
         """
         readTopo method reads downloaded topography models. They are then
@@ -383,7 +382,6 @@ class BathyMeasured():
             # Close the netcdf
             ncfile.close(); 
              
-
     def setSeaLevel(self, basinVolume = {"on":True, 'uncompactedVol':None}, oceanArea = {"on":True, "area":0.7}, isostaticCompensation = {"on":False}, verbose=True):
         """
         setSetLevel method is used to define a bathymetry model from a
@@ -630,11 +628,6 @@ class BathyMeasured():
         ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
         ## are define here.
         self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
-
-
-
-
-
 
     def saveBathymetry(self, verbose = True):
         """
@@ -908,15 +901,28 @@ class BathyRecon():
         # Set the radius of planet
         self.radiuskm = 6371.0;
     
-        # Ocean basin volume.
+        # Ocean basin volume is defined based on analysis from Bogumil et al. (2024) https://doi.org/10.1073/pnas.2400232121.
         constVOC = True;
+        self.VOCValuesPD      = np.array([1.3350350e+18]); # From downsampled topo6 as defined in https://doi.org/10.1073/pnas.2400232121
         if constVOC:
             print("Ocean basin volume is constant through reconstruction period.")
-            self.VOCValues      = np.array([1.335e18]);
+            self.VOCValues      = cp.deepcopy(self.VOCValuesPD);
             self.VOCAgeValues   = np.arange(0,85,5);
         else:
-            # Defined as in Bogumil et al. (2024) https://doi.org/10.1073/pnas.2400232121
-            pass
+            # As defined as in Bogumil et al. (2024) https://doi.org/10.1073/pnas.2400232121
+            self.VOCValues = 1.3350350e+18; # From downsampled topo6
+            self.VOCAgeValues   = np.arange(0,85,5);
+            # percent of total surface water stored in glaciers which would be ocean
+            # water at studied time period.
+            self.VOCValues = np.empty(size=self.VOCAgeValues);
+            for i in range(self.VOCAgeValues):
+                if self.VOCAgeValues[i] >= 40:
+                    per_ice_melt = 2.1;         # [%] - No glaciers
+                elif (self.VOCAgeValues[i] >= 5) & (self.VOCAgeValues[i]<40):
+                    per_ice_melt = 2.1/2;       # [%] - Half glacier volume
+                else:
+                    per_ice_melt = 0;           # [%] - Present day glaciers
+                self.VOCValues[i] = (100/(100-per_ice_melt))*cp.deepcopy(self.VOCValuesPD);
 
 
     
@@ -954,6 +960,7 @@ class BathyRecon():
 
         # Define all periods to bathymetry for.
         reconAgeVec = list(np.arange(endMa, startMa+deltaMyr, deltaMyr));
+
         # Loop over all periods.
         for reconAge in (pbar := tqdm(reconAgeVec)):
             # 1. Add ocean lithosphere age-depth relationship 
@@ -998,31 +1005,164 @@ class BathyRecon():
             self.bathymetry[self.bathymetry>0] = np.nan;
             self.bathymetry = (-1)*self.bathymetry
 
-            # 8. Apply ocean volume correction based on is representation of present-day
-            # bathymetry.
-            # 8a. Set the ocean volume expected at the reconstruction period.
-            self.VOCi = self.VOCfnc(reconAge);
+            # 8. Calculate and define properties of bathymetry model
+            self.AOC = np.nansum(np.nansum( areaWeights[~np.isnan(self.bathymetry)] ))
+            self.VOC = np.sum(np.sum( (self.bathymetry*areaWeights)[~np.isnan(self.bathymetry)] ))
+            
+            ## Sets self.highlatA and self.highlatlat
+            self.highlatP = .10; # This is the hb[10] value from LOSCAR, % seafloor area in high latitude box.
+            self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
 
-            # 8b. Apply the ocean volume correction based on the misfit of present-day
+            ## Define global distribution of sea seafloor depths
+            ## Both self.bathymetryAreaDist and self.bathymetryAreaDist_wHighlat
+            ## are define here.
+            self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
+
+            # 9. Save bathymetry model w/o the ocean volume corrections
+            # FIXME: Need to define this at a higher level.
+            self.data_dir = os.getcwd();
+            self.resolution = resolution;
+            self.model = "EarthRecon3Basins"
+            #self.model = "EarthRecon3_4Basins"
+
+            self.saveBathymetry(reconAge, verbose=True);
+
+            # 10. Find basins (Note that this is a partially manual process)
+            ## Define basins class for finding basins
+            def mergeBasins(basins, reconAge):
+                if reconAge == 0:
+                    # Merge basins north of Atlantic
+                    basins.mergeBasins(0,[1,2,3,4,6,8,12,25,29,30,31,35,40,43,44,45,46,47,51,54,57,62,63,64,65,66,68,69,70], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,18,22,23,24,25,26], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
+                elif reconAge == 5:
+                    # Merge basins north of Atlantic
+                    basins.mergeBasins(0,[1,2,3,4,5,6,7,23,27,29,30,36,38,40,42,43,44,45,46,47,52,55,56,58,60,62,63,64,65,67], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,20,21,22,23,25], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
+                elif reconAge == 10:
+                    # Merge basins north of Atlantic
+                    basins.mergeBasins(0,[1,2,3,4,5,6,7,14,30,33,35,36,37,38,43,47,49,50,52,53,54,55,56,57,58,59,60,64,65,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    basins.mergeBasins(1,[2,3,4,5,6,8,10,11,12,13,14,15,16,17,18,19,20,23,24,27,28], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    basins.mergeBasins(2,[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
+                    pass
+                elif reconAge == 15:
+                    pass
+                elif reconAge == 20:
+                    pass
+                elif reconAge == 25:
+                    pass
+                elif reconAge == 30:
+                    pass
+                elif reconAge == 35:
+                    pass
+                elif reconAge == 40:
+                    pass
+                elif reconAge == 45:
+                    pass
+                elif reconAge == 50:
+                    pass
+                elif reconAge == 55:
+                    pass
+                elif reconAge == 60:
+                    pass
+                elif reconAge == 65:
+                    pass
+                elif reconAge == 70:
+                    pass
+                elif reconAge == 75:
+                    pass
+                elif reconAge == 80:
+                    pass
+                print("working progress")
+
+                # Report
+                blues_cm = mpl.colormaps['Blues'].resampled(100)
+                basins.visualizeCommunities( cmapOpts={"cmap":blues_cm,
+                                                    "cbar-title":"cbar-title",
+                                                    "cbar-range":[np.nanmin(np.nanmin(basins.bathymetry)),
+                                                                    np.nanmean(basins.bathymetry)+2*np.nanstd(basins.bathymetry)]},
+                                            pltOpts={"valueType": "Bathymetry",
+                                                    "valueUnits": "m",
+                                                    "plotTitle":"{}".format(basins.body),
+                                                    "plotZeroContour":True,
+                                                    "nodesize":1,
+                                                    "connectorlinewidth":1,
+                                                    "projection":"Miller"},
+                                            draw={"nodes":False,
+                                                "connectors":False,
+                                                "bathymetry":False,
+                                                "coastlines":True,
+                                                "gridlines":False,
+                                                "nodes-contour":True},
+                                            saveSVG=False,
+                                            savePNG=True)
+                
+                # Return
+                return basins
+
+            basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                  filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
+                                  body=self.model);
+
+            # Define basins based on user input boundaries
+            # If the file exist then read file, otherwise write
+            if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
+                basins.defineBasins(minBasinCnt = 3,
+                                    method = "Louvain",
+                                    reducedRes={"on":True,"factor":1},
+                                    read=True,
+                                    write=False,
+                                    verbose=False)
+            else:
+                basins.defineBasins(minBasinCnt = 3,
+                                    method = "Louvain",
+                                    reducedRes={"on":True,"factor":1},
+                                    read=False,
+                                    write=True,
+                                    verbose=False)
+            
+            if self.model == "EarthRecon3Basins":
+                basins = mergeBasins(basins, reconAge)
+
+            # Assign basins as a BathyRecon class attribute.
+            self.basins = basins;
+
+            # 11. Apply ocean volume correction based on is representation of present-day
+            # bathymetry.
+            # 11a. Set the ocean volume expected at the reconstruction period.
+            self.VOCTarget = self.getVOCi(reconAge);
+
+            # 11b. Apply the ocean volume correction based on the misfit of present-day
             # distributions and the expected paleo ocean volume.
             if reconAge == 0:
-                self.topography, self.etopoKernelDis = self.addVOCCorrection(reconAge, self.topography, self.VOCi, resolution=1, verbose=True)
+                self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
             else:
                 try:
                     # If self.etopoKernelDis was defined (i.e., the present-day analysis was previously done) then
                     # the volume correction will be applied to the topography model.
-                    self.etopoKernelDis
+                    
 
                     # Apply the ocean volume correction
-                    self.topography, self.etopoKernelDis = self.addVOCCorrection(reconAge, self.topography, self.VOCi, resolution=1, verbose=False)
+                    self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
                 except:
                     # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
                     pass
             
 
-            # 9. Make standardized netCDF4
-
-            # 10. Write standardized netCDF4
+            # 12. Save bathymetry model w/ the ocean volume corrections
 
             # Report
             '''
@@ -1047,9 +1187,9 @@ class BathyRecon():
                                      savePNG=False)
             '''
 
-    def VOCfnc(self, age):
+    def getVOCi(self, age):
         """
-        VOCfnc returns the expected ocean basin volume at some period
+        getVOCi returns the expected ocean basin volume at some period
         in Earth history.
 
         Parameters
@@ -1070,8 +1210,158 @@ class BathyRecon():
         else:
             return self.VOCValues[self.VOCAgeValues == age];
 
-    def makeNetCDF4(self):
-        print('working progress')
+    def saveBathymetry(self, reconAge, verbose = True):
+        """
+        saveBathymetry is a method used to save reconstructed bathymetry
+        models. Note that models will be saved under the same root folder
+        that was supplied to the readTopo(...) method.
+
+        Dimensions are as follows:
+
+        lat     : latitude in degrees, ranging from -180,180.
+        lon     : longitude in degrees, ranging from -90,90.
+        binEdges: upper bound bin edges for bathymetry distributions, in km.
+
+        Values saved to the output netCDF4 are as follows:
+
+        bathymetry : NUMPY ARRAY
+            nx2n array representing seafloor depth, in m, with
+            negative values, and topography with positive values.
+        lat : NUMPY VECTOR
+            A vector of cell-registered latitudes range the entire
+            planets surface, -90,90 degrees.
+        lon : NUMPY VECTOR
+            A vector of cell-registered longitudes range the entire
+            planets surface, -180,180 degrees.
+        areaWeights : NUMPY VECTOR
+            An array of global degree to area weights. The size is dependent on
+            input resolution. The sum of the array equals 4 pi radius^2 for 
+            sufficiently high resolution, in m2.
+        binEdges : NUMPY VECTOR
+            A numpy list of bin edges, in km, used in calculating
+            the bathymetry distribution. Note that 1) anything deeper
+            than the last bin edge will be defined within the last
+            bin and 2) the first bin edge corresponds to the first
+            non-zero bin edge.
+        bathymetry-distribution-G : NUMPY LIST
+            A histogram of seafloor bathymetry within binEdges bins.
+            Note that this distribution is calculated with the exclusion
+            of high latitude distribution of seafloor depths. This is
+            what is normally inputted into the LOSCAR carbon cycle model.
+        bathymetry-distribution-whighlat-G : NUMPY LIST
+            This is the same as bathymetry-distribution-G, but includes
+            the high latitude seafloor distribution of seafloor depths.
+        highlatA : FLOAT
+            Total high latitude ocean area, in m2. Note that this is
+            not the hb[10] value in the LOSCAR earth system model.
+        highlatlat : FLOAT
+            The lowest latitude of the high latitude cutoff, in degree.
+            This value is define by the constraint that some (user define
+            portion of the ocean surface should be within a high latitude
+            ocean basin, faciliating ocean turnover in carbon cycle models).
+        AOC : FLOAT
+            Total sea surface area, in m2.
+        VOC : FLOAT
+            Total basin volume, in m3.
+
+        Parameters
+        ----------
+        reconAge : INT
+            Age of the reconstruction, in Ma.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Returns
+        -------
+        None.
+        
+        """
+        # Make directory for storing bathymetry model(s)
+        utils.create_file_structure([self.data_dir+"/bathymetries",
+                                     self.data_dir+"/bathymetries/EarthRecon",
+                                     self.data_dir+"/bathymetries/EarthRecon3Basins",
+                                     self.data_dir+"/bathymetries/EarthRecon3_4Basins"],
+                                     root = True,
+                                     verbose=verbose)     
+        
+        # Set netCDF4 filename
+        BathyPath = "{0}/bathymetries/{1}/{1}_{2:0.0f}deg_{3:0.0f}Ma.nc".format(self.data_dir,  self.model, self.resolution, reconAge);
+        
+        # Make new .nc file
+        ncfile = Dataset(BathyPath, mode='w', format='NETCDF4_CLASSIC') 
+
+        # Define dimension (latitude, longitude, and bathymetry distributions)
+        lat_dim = ncfile.createDimension('lat', len(self.bathymetry[:,0]));     # latitude axis
+        lon_dim = ncfile.createDimension('lon', len(self.bathymetry[0,:]));     # longitude axis
+        binEdges_dim = ncfile.createDimension('binEdges', len(self.binEdges[1:]));      # distribution
+        
+        # Define lat/lon with the same names as dimensions to make variables.
+        lat = ncfile.createVariable('lat', np.float32, ('lat',));
+        lat.units = 'degrees_north'; lat.long_name = 'latitude';
+        lon = ncfile.createVariable('lon', np.float32, ('lon',));
+        lon.units = 'degrees_east'; lon.long_name = 'longitude';
+
+        # Define a 2D variable to hold the elevation data
+        bathy = ncfile.createVariable('bathymetry',np.float64,('lat','lon'))
+        bathy.units = 'meters'
+        bathy.standard_name = 'bathymetry'
+
+        # Define vector as function with longitude dependence
+        areaWeights = ncfile.createVariable('areaWeights',np.float64,('lat',))
+        areaWeights.units = 'meters sq'
+        areaWeights.standard_name = 'areaWeights'
+
+        # Define variables for bathymetry distributions (vectors)
+        binEdges = ncfile.createVariable('binEdges', np.float32, ('binEdges',));
+        binEdges.units = 'km'; binEdges.long_name = 'km depth';
+
+        distribution_whighlat = ncfile.createVariable('bathymetry-distribution-whighlat-G', np.float64, ('binEdges',))
+        distribution_whighlat.units = 'kernel distribution'
+        distribution_whighlat.standard_name = 'bathymetry-distribution-whighlat-G'
+
+        distribution = ncfile.createVariable('bathymetry-distribution-G', np.float64, ('binEdges',))
+        distribution.units = 'kernel distribution'
+        distribution.standard_name = 'bathymetry-distribution-G'
+
+        # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
+        highlatlat = ncfile.createVariable('highlatlat', None)
+        highlatlat.units = 'degrees'
+        highlatlat.standard_name = 'highlatlat'
+
+        highlatA = ncfile.createVariable('highlatA', None)
+        highlatA.units = 'meters sq'
+        highlatA.standard_name = 'highlatA'
+
+        VOC = ncfile.createVariable('VOC', None)
+        VOC.units = 'meters cubed'
+        VOC.standard_name = 'VOC'
+
+        AOC = ncfile.createVariable('AOC', None)
+        AOC.units = 'meters sq'
+        AOC.standard_name = 'AOC'
+        
+        # Format title
+        ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees.'.format(self.model, self.resolution)
+
+        # Populate the variables
+        lat[:]  = self.lat[:,0];
+        lon[:]  = self.lon[0,:];
+        bathy[:] = self.bathymetry;
+        areaWeights[:] = self.areaWeights[:,0];
+
+        # Add bathymetry distribution information
+        distribution_whighlat[:] = self.bathymetryAreaDist_wHighlat;
+        distribution[:] = self.bathymetryAreaDist;
+        binEdges[:] = self.binEdges[1:];
+
+        # Add attributes
+        highlatlat[:] = self.highlatlat;
+        highlatA[:] = self.highlatA;
+        VOC[:] = self.VOC;
+        AOC[:] = self.AOC;
+
+        # Close the netcdf
+        ncfile.close();
 
     def getDEM(self, age, resolution, fuzzyAge=False):
         '''
@@ -1384,7 +1674,7 @@ class BathyRecon():
     
         return topographyOut
 
-    def addVOCCorrection(self, age, topography, VOCTarget, resolution, verbose=True):
+    def addVOCCorrection(self, age, bathymetry, VOCTarget, resolution, verbose=True):
         '''
         addVOCCorrection 
         FIXME: add appropriate description.
@@ -1397,22 +1687,21 @@ class BathyRecon():
             Note that the correction distribution needs to be calculated
             for the VOC correction to be applied at other periods beyond
             present-day.
-        topography : NUMPY ARRAY
-            nx2n global array of topography, in m,  or array of zeros
-            to add seafloor subsidence to.
+        bathymetry : NUMPY ARRAY
+            nx2n global array of bathymetry, in m.
         VOCTarget : FLOAT
             The target ocean basin volume to reconstruct. Bathymetry
             distributions will be modified based on present-day mismatch
             in modeling the bathtmetry distribution.
         resolution : FLOAT
             The resolution, in degree, at which the user wants to
-            read the present-day topography model at.
+            read the present-day bathymetry model at.
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
         
         '''
         # Set the global ocean basin volume for 
-        #VOCTarget = self.VOCfnc(age);
+        #VOCTarget = self.getVOCi(age);
 
 
         def plotFnc(bathymetryAreaDist, bathymetryAreaDistEtopo, binEdges, areaTotal, areaTotalEtopo, volTotal, volTotalEtopo, bathymetry, etopo):
@@ -1429,18 +1718,17 @@ class BathyRecon():
             ax1 = fig.add_subplot(gs[0], projection=ccrs.Mollweide());
 
             ## Add the plot using pcolormesh
-            bathymetry[np.isnan(bathymetry)] = 0;
-            etopo[np.isnan(etopo)] = 0;
-            bathymetry[bathymetry!=0] = bathymetry[bathymetry!=0]/bathymetry[bathymetry!=0];
-            etopo[etopo!=0] = etopo[etopo!=0]/etopo[etopo!=0];
-            difference = bathymetry-etopo;
+            bathymetryplt = cp.deepcopy(bathymetry);
+            etopoplt = cp.deepcopy(etopo);
+            bathymetryplt[np.isnan(bathymetryplt)] = 0;
+            etopoplt[np.isnan(etopoplt)] = 0;
+            bathymetryplt[bathymetryplt!=0] = bathymetryplt[bathymetryplt!=0]/bathymetryplt[bathymetryplt!=0];
+            etopoplt[etopoplt!=0] = etopoplt[etopoplt!=0]/etopoplt[etopoplt!=0];
+            difference = bathymetryplt-etopoplt;
             # 0     Representing bathymetry.
             # -1    measured bathymetry was not modeled.
             # 1     bathymetry was modeled where no measured bathymetry exists.
             mesh = ax1.scatter(self.lon[difference!=0], self.lat[difference!=0], c=difference[difference!=0], s=1, transform=ccrs.PlateCarree(), cmap='RdGy');
-            #print( "np.sum(difference[difference!=0])", np.sum(difference[difference!=0]))
-            #print( "np.nansum(difference[difference!=0]*self.areaWeights)", np.nansum(difference*self.areaWeights))
-            #print( "deltaArea", 100*(np.nansum(bathymetry*self.areaWeights) -np.nansum(etopo*self.areaWeights))/np.nansum(etopo*self.areaWeights))
 
             ## Add a colorbar
             cbar = plt.colorbar(mesh, ax=ax1, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
@@ -1456,7 +1744,7 @@ class BathyRecon():
 
             ## Make histogram plot
             ax2 = fig.add_subplot(gs[1]);
-
+            
             factor1 = .2
             factor2 = .25
             plt.bar(x=binEdges[1:]-(factor2/2)*np.diff(binEdges),
@@ -1497,49 +1785,623 @@ class BathyRecon():
             plt.gca().spines['right'].set_visible(False)
             plt.xlim([0,7])
 
+
+
+        def plotFnc2(lat, lon, values,
+                     areaTotal, areaTotalEtopo, volTotal, volTotalEtopo,
+                            binEdges, bathymetryAreaDistVOCcorrection, bathymetryAreaDistEtopo,
+                            outputDir = os.getcwd(),
+                            fidName = "plotGlobal.png",
+                            cmapOpts={"cmap":"viridis",
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":[0,1]},
+                            pltOpts={"valueType": "Bathymetry",
+                                        "valueUnits": "m",
+                                        "plotTitle":"",
+                                        "plotZeroContour":False},
+                            saveSVG=False,
+                            savePNG=False):
+            """
+            plotFnc2 function is used to plot global ranging datasets that
+            are represented with evenly spaced latitude and longitude values.
+            This function is modified from plotGlobalwHist and is used to 
+            plot and compare VOC corrected bathymetry vs etopo bathymetry.
+
+            Parameters
+            ----------
+            lat : NUMPY ARRAY
+                nx2n array representing cell registered latitudes, in deg,
+                ranging from [-90, 90]. Latitudes change from row to row.
+            lon : NUMPY ARRAY
+                nx2n array representing cell registered longitudes, in deg,
+                ranging from [-180, 180]. Longitudes change from column to column.
+            Values : NUMPY ARRAY
+                nx2n array representing cell registered geographic data, in [-] units.
+            cmapOpts : DICTIONARY
+                A set of options to format the color map and bar for the plot
+            pltOpts : DICTIONARY
+                A set of options to format the plot
+            saveSVG : BOOLEAN
+                An option to save an SVG output. The default is False.
+            savePNG : BOOLEAN
+                An option to save an PNG output. The default is False.
+
+            Returns
+            -------
+            None.
+            """
+            # Start making figure
+            ## Create a figure
+            
+            ## Set up the Mollweide projection
+            fig = plt.figure(figsize=(8, 8))
+            gs = GridSpec(2, 1, height_ratios=[3, 1]);  # 2 rows, 1 column, with the first row 3 times taller
+
+            ax1 = fig.add_subplot(gs[0], projection=ccrs.Mollweide());
+
+            ## Add the plot using pcolormesh
+            mesh = ax1.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1])
+            if pltOpts["plotZeroContour"]:
+                # Set any np.nan values to 0.
+                values[np.isnan(values)] = 0;
+                zeroContour = ax1.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+            ## Add a colorbar
+            cbar = plt.colorbar(mesh, ax=ax1, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+            cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+            ## Add gridlines
+            ax1.gridlines()
+
+            ## Set a title
+            plt.title(pltOpts['plotTitle'])
+
+            ## Make histogram plot
+            ax2 = fig.add_subplot(gs[1]);
+            
+            factor1 = .2
+            factor2 = .25
+            plt.bar(x=binEdges[1:]-(factor2/2)*np.diff(binEdges),
+                    height=bathymetryAreaDistVOCcorrection,
+                    width=factor1*np.diff(binEdges),
+                    label= "VOC Corrected bathymetry")
+            plt.bar(x=binEdges[1:]+(factor2/2)*np.diff(binEdges),
+                    height=bathymetryAreaDistEtopo,
+                    width=factor1*np.diff(binEdges),
+                    label= "Etopo Bathymetry")
+            
+
+            # Plot annoation of total area and volume difference
+            deltaAOC = 100*(areaTotal-areaTotalEtopo)/areaTotalEtopo;
+            deltaVOC = 100*(volTotal-volTotalEtopo)/volTotalEtopo;
+
+
+            bbox = dict(boxstyle="round", fc="0.9", color='blue')
+            plt.annotate(
+                f"$\Delta$AOC = {deltaAOC:.1f}%\n$\Delta$VOC = {deltaVOC:.1f}%",
+                fontsize=12,
+                xy=(.1, 20),
+                bbox=bbox)
+            
+            # ticks
+            plt.xticks(binEdges[1:]);
+            plt.yticks(np.arange(0,35,5));
+
+            # Labels
+            plt.legend();
+            plt.title("Planet's Bathymetry Distribution")
+            plt.xlabel("Bathymetry Bins [km]");
+            plt.ylabel("Seafloor Area [%]");
+
+            # figure format
+            plt.gca().spines['top'].set_visible(False)
+            plt.gca().spines['right'].set_visible(False)
+
+            # Save figure
+            if savePNG:
+                plt.savefig("{}/{}".format(outputDir,fidName), dpi=600)
+            if saveSVG:
+                plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+                    
+
+        def applyVOCCorrection(correctionDist, bathymetry, VOCTarget, VOCi):
+            """
+            applyVOCCorrection will use a distribution (correctionDist) to
+            determine what ocean depths should be (removed or added) from
+            a 2D global array of bathymetry. bathymetry will change such
+            that the total basin volume VOC is equal to VOCtarget.
+
+            Parameters
+            -----------
+            bathymetry : NUMPY ARRAY
+                nx2n global array of bathymetry, in m.
+            VOCTarget : FLOAT
+                The target ocean basin volume to reconstruct. Bathymetry
+                distributions will be modified based on present-day mismatch
+                in modeling the bathtmetry distribution.
+
+            Returns
+            --------
+            bathymetry : NUMPY ARRAY
+                nx2n global array of bathymetry, in m.
+
+            
+            """
+
         # If the bathymetry is representing present day then calculate
         # the correction distribution to apply to all later paleo
         # bathymetry reconstructions.
         if age == 0:
-            # Create copy of the present-day topography that is a the same
-            # resolution as the reconstruction models.
+            # Create copy of the measured present-day topography that is
+            # at the same resolution as the reconstruction models.
             os.system("gmt grdsample {0} -G{1} -I{2} -Rd".format(self.directories['etopo']+"/"+self.etopofid,
                                                                     os.getcwd()+'/tempetopo.nc',
                                                                     resolution))
             # Read etopo1 and define etopo bathymetry
             etopo = Dataset(os.getcwd()+'/tempetopo.nc')
-            etopobathymetry = cp.deepcopy(etopo['z'][:].data);
-            etopobathymetry[etopobathymetry>0] = np.nan;
-            etopobathymetry = (-1)*etopobathymetry
+            self.etopobathymetry = cp.deepcopy(etopo['z'][:].data);
+            self.etopobathymetry[self.etopobathymetry>0] = np.nan;
+            self.etopobathymetry = (-1)*self.etopobathymetry
 
 
             # Delete paleoDEM
             os.system("rm {}".format(os.getcwd()+'/tempetopo.nc'))
 
             # Create bathymetry histogram (for model at 0 Ma)
-            self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+            self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(bathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
 
             # Create bathymetry histogram (for etopo)
-            self.bathymetryAreaDistEtopo, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(etopobathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+            self.bathymetryAreaDistEtopo, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.etopobathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
 
-            # Mismatch between modeled and measured bathymetry
-            self.bathymetryAreaDistMismatch = (self.bathymetryAreaDist - self.bathymetryAreaDistEtopo)
+            # Mismatch between modeled and measured bathymetry (Positive magitudes represent % of seafloor overrepresented 
+            # NORMALIZED TO GLOBAL SEAFLOOR AREA) 
+            self.bathymetryAreaDistMismatchGNorm = (self.bathymetryAreaDist - self.bathymetryAreaDistEtopo);
+
+            # Mismatch between modeled and measured bathymetry (Positive magitudes represent % of seafloor overrepresented
+            # NORMALIZED TO MISMATCHED SEAFLOOR AREA)
+            #self.bathymetryAreaDistMismatchMMNorm = 100*self.bathymetryAreaDistMismatchGNorm/np.sum(np.abs(self.bathymetryAreaDistMismatchGNorm));
+
+            if verbose:
+                plotFnc(self.bathymetryAreaDistMismatchGNorm,
+                        self.bathymetryAreaDistMismatchGNorm,
+                        self.binEdges,
+                        np.nansum(self.areaWeights[~np.isnan(bathymetry)]),
+                        np.nansum(self.areaWeights[~np.isnan(self.etopobathymetry)]),
+                        np.nansum(bathymetry*self.areaWeights),
+                        np.nansum(self.etopobathymetry*self.areaWeights),
+                        bathymetry,
+                        self.etopobathymetry)
+                
+            # Calculate basin parameters. This produces the following useful values
+            ## self.basins.BasinIDA : Global array with values corresponding to basin ID
+            ## self.basins.bathymetryAreaDistBasin : ["Basin0", "Basin1",...].  Note that
+            ##      this distribution is calculated with the exclusion of high latitude
+            ##      distribution of seafloor depths. This is what is normally inputted into
+            ##      the LOSCAR carbon cycle model.
+            ## self.basins.bathymetryVolFraction : ["Basin0", "Basin1",...]. Each entry contains
+            ##      the precent basin volume, normalized to the volume of all ocean basins
+            ##      (excluding the high latitude ocean volume).
+            ## self.basins.bathymetryAreaFraction : ["Basin0", "Basin1",...]. Each entry contains
+            ##      the precent basin area, normalized to the total seafloor area (including
+            ##      the high latitude area).
+            self.basins.calculateBasinParameters()
+
+            # Apply bathymetry/VOC correction for present-day bathymetry model basin-by-basin
+            
+            ## Define basin count
+            self.basinCnt = len(np.unique( self.basins.BasinIDA[~np.isnan(self.basins.BasinIDA)] ))
+
+            ## Define basin area and volume fractions
+            volBasin    = np.empty(self.basinCnt);
+            areaBasin   = np.empty(self.basinCnt);
+            for i in range(self.basinCnt):
+                areaBasin[i]    = np.sum( self.areaWeights[self.basins.BasinIDA==i] );
+                volBasin[i]     = np.sum( bathymetry[self.basins.BasinIDA==i]*self.areaWeights[self.basins.BasinIDA==i] );
+            
+            ## Use volume fraction of ocean to determine the fraction of ocean volume correction that should be applied to each basin
+            totalVolRes = (np.sum(volBasin)-VOCTarget)
+
+            ## Total basin volume fractions
+            volBasinFrac = volBasin/np.sum(volBasin);
+            
+            ## Calculate percents to add to each bin then plot
+            sxbin_p = 100*(self.bathymetryAreaDist/np.sum(self.bathymetryAreaDist)-self.bathymetryAreaDistEtopo/np.sum(self.bathymetryAreaDistEtopo));
+
+            ## Tracks the amount of ocean volume removed
+            basinVolumeRemoved = 0.0;
+            
+            ## Create logical to represent all values of depth_in in each bin (depthBinLogical)
+            randomDepthIndBin = {};
+
+            for i in range(self.basinCnt):
+                #depthBinLogical   =np.zeros(shape=(len(self.binEdges),len(bathymetry[self.basins.BasinIDA==i])));
+                 
+                for j in range(len(self.binEdges[1:])):
+
+                    # Note that depthBinLogical represents an (nx2) array with rows
+                    # representing indecies of points that lie within basini and 
+                    # self.binEdges[j] and self.binEdges[j+1] depths.
+                    # Note that self.binEdges values are in units of km.
+                    # Note that bathymetry is positive and in units of m.
+                    if j < len(self.binEdges):      # Contains depths between current bin and next bin
+                        depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&((1e-3)*bathymetry<self.binEdges[j+1])&(self.basins.BasinIDA==i) );
+                    else:                        # The last bin which contains depths below bins_in(end)
+                        depthBinLogical =   np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
+                    
+                    verbose2 = False
+                    if verbose2:
+                        cnt = 0;
+                        for pointi in depthBinLogical:
+                            if cnt < 10:
+                                print("Basin-{0}_Bin-{1}_to_{2}".format(i, self.binEdges[j], self.binEdges[j+1]),
+                                    bathymetry[pointi[0], pointi[1]] )
+                            else:
+                                break
+                            cnt+=1;
+                        print("\n")
+                    
+                    # Random_depth_ind represents random depths to modify
+                    # This has a very minor effect on bathymetry distributions input
+                    # into LOSCAR.
+                    # randomDepthIndBin is a dictionary that contains the entries for each
+                    # basin and bathymetry bin, specifically the corresponding indices
+                    # within the bathymetry array.
+                    randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(i, self.binEdges[j], self.binEdges[j+1])] = depthBinLogical
+                    np.random.shuffle(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(i, self.binEdges[j], self.binEdges[j+1])])                
+
+            ## Factors which dictate the percentage of ocean volume movement
+            ## from bins with excess ocean volume
+            bin_redis_faction = cp.deepcopy(sxbin_p);
+            bin_redis_faction[bin_redis_faction<0]=0;
+            bin_redis_faction = bin_redis_faction/np.sum(bin_redis_faction);
+            
+            ## Iterate over basins
+            for basini in range(self.basinCnt):
+
+                ## Find values to be changed in basini
+                logicalBasini = (self.basins.BasinIDA==basini);
+            
+                ## Define the volume reduction required in basini.
+                volReduction = totalVolRes*volBasin[basini]
+
+                ## Set values 
+            
+                ## Iterate over bin depths
+                if verbose:
+                    print("Basin ", basini)
+                for j in range(len(self.binEdges[1:])):
+
+                    ## Find the amount of ocean volume to be transfer between bin j (bins with
+                    ## excess ocean volume/area) and other bins (bins lacking ocean area representation).
+                    if sxbin_p[j] > 0:
+                        ## If bin has excess ocean area/volume
+
+                        ## Ocean volume to be removed through adding shallower depths than the current bin.
+                        sxbin_p_rm = sxbin_p[0:j];
+                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )*\
+                            (2-np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
+                        ## Ocean volume to be added through adding deeper depths than the current bin.
+                        sxbin_p_add = sxbin_p[j+1:];
+                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )*\
+                            np.abs(np.sum( sxbin_p_add[sxbin_p_add<0])/sxbin_p[j]);
+                        ## Ocean volume to be removed/added through adding shallower/deeper bins than the current bin
+                        bini_redis_faction = np.append(np.append(bini_redis_faction1,np.array(0.0)),bini_redis_faction2);
+
+                        if verbose:
+                            print(j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
+
+                        ## Apply volume correction to each basini bin i.                       
+                        binVolume = 0.0;           # (re)set binVolume each time we change start bin (every j interation)
+                        jjj=0;                     # (re)set jjj each time we change start bin (every j interation)
+                        for jj in range(len(bini_redis_faction)):
+                            if bini_redis_faction[jj] > 0:
+                                # Calculate how much ocean volume residual is
+                                # represented in the lacking bin (bini_vol_residual)
+                                bini_vol_residual = totalVolRes*volBasinFrac[basini]*bin_redis_faction[j]*bini_redis_faction[jj];
+                                volumeChange = 0.0;
+                                
+                                # Note1: this chooses the option for how the bathymetry
+                                # should be redistrbuted to other bins.
+                                # Note2: Also, this code will not excute unless the
+                                # residual in bin (jj) constitutes <1% of the total
+                                # residual between constant ocean volume and model.
+                                opt_max_vol_trans = True;
+                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*1e-2):
+                                    max_ind = np.shape(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])])[0];
+
+                                    while volumeChange < bini_vol_residual:
+                                        # (WORKING PROGRESS)
+                                        # Reached ~100% of ocean volume at studied time or max indices at depth were move to other depths 
+                                        opt_redis_cutoff = False;
+                                        if opt_redis_cutoff & (np.nansum(bathymetry*self.areaWeights) < VOCTarget):
+                                            # print("Target global ocean volume is now predicted to be accurate for time. Some basins might be lacking basin volume representation compared to others.")
+                                            break
+                                        elif jjj == (max_ind-1):
+                                            # print("Max indices were reached. No more redistributions can be done to reconcile ocean volume.")
+                                            break
+                                        
+                                        # Select random ind from random ind vector - This value will then be changed
+                                        #   Note that ind is only random since randomDepthIndBin dictionary indices are
+                                        #   randomly ordered.
+                                        ind = randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])][jjj];
+
+                                        # New depth - Choose depth randomly within bin or at maximum depth
+                                        bins_in_cal = np.hstack((1e3*self.binEdges, 1e3*self.binEdges[-1]-1))
+                                        new_depth = np.abs(np.array([bins_in_cal[jj]+1, bins_in_cal[jj-1]]));
+
+                                        # Find the min and max volume changes to new bin
+                                        #delta_vol = np.abs(self.areaWeights[self.basins.BasinIDA==basini][ind[0],ind[1]]*(np.abs(bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]])-new_depth));
+                                        delta_vol = np.abs(self.areaWeights[ind[0],ind[1]]*(np.abs(bathymetry[ind[0],ind[1]])-new_depth));
+
+                                        # Set new depth to the maximum volume change in water column
+                                        new_depth = new_depth[np.max(delta_vol)==delta_vol];
+
+                                        # Use the maximum volume change to new bin as new depth
+                                        if volumeChange+np.max(delta_vol)<=bini_vol_residual:
+                                            # Append the volume change to lacking bin
+                                            volumeChange = volumeChange+np.max(delta_vol);
+                                            # Append the depth to that of the lacking bin
+                                            # FIXME: Check if this value should be positive of negative.
+                                            #bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]]= np.abs(new_depth);
+                                            bathymetry[ind[0],ind[1]]= np.abs(new_depth);
+                                            # Move to next random index of the over represented ocean volume bin
+                                            jjj=jjj+1;
+                                        else:
+                                            # Scenario where depth cannot be added with
+                                            # out exceeding the residual volume
+                                            # correction for that bin
+                                            break
+
+                                # Tracks the amount of ocean volume removed
+                                basinVolumeRemoved += volumeChange;
+                                binVolume += bini_vol_residual;
+
 
             # Report
             if verbose:
-                plotFnc(self.bathymetryAreaDistMismatch,
-                        self.bathymetryAreaDistMismatch,
-                        self.binEdges,
-                        np.nansum(self.areaWeights[~np.isnan(self.bathymetry)]),
-                        np.nansum(self.areaWeights[~np.isnan(etopobathymetry)]),
-                        np.nansum(self.bathymetry*self.areaWeights),
-                        np.nansum(etopobathymetry*self.areaWeights),
-                        self.bathymetry,
-                        etopobathymetry)
+                # Create bathymetry histogram (for model at 0 Ma) that includes VOC corrections
+                self.bathymetryAreaDistVOCcorrection, self.bathymetryAreaDist_wHighlatVOCcorrection, self.binEdges = calculateBathymetryDistributionGlobal(bathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+
+                blues_cm = mpl.colormaps['Blues'].resampled(100)
+                plotFnc2(self.lat, self.lon, bathymetry,
+                         np.nansum(self.areaWeights[~np.isnan(bathymetry)]),
+                         np.nansum(self.areaWeights[~np.isnan(self.etopobathymetry)]),
+                         np.nansum(bathymetry*self.areaWeights),
+                         np.nansum(self.etopobathymetry*self.areaWeights),
+                         self.binEdges, self.bathymetryAreaDistVOCcorrection, self.bathymetryAreaDistEtopo,
+                         outputDir = os.getcwd(),
+                         fidName = "plotGlobal-VOCCorrection.png",
+                         cmapOpts={"cmap":blues_cm,
+                                   "cbar-title":"cbar-title",
+                                   "cbar-range":[np.nanmin(np.nanmin(bathymetry)),np.nanmean(bathymetry)+2*np.nanstd(bathymetry)]},
+                         pltOpts={"valueType": "Bathymetry",
+                                  "valueUnits": "m",
+                                  "plotTitle":"",
+                                  "plotZeroContour":False},
+                         saveSVG=False,
+                         savePNG=True);
+
+        else:
+            # If age is not present-day then use previously calculated sxbin_p
+            # to apply basin volume correction.
+
+            # Calculate basin parameters. This produces the following useful values
+            ## self.basins.BasinIDA : Global array with values corresponding to basin ID
+            ## self.basins.bathymetryAreaDistBasin : ["Basin0", "Basin1",...].  Note that
+            ##      this distribution is calculated with the exclusion of high latitude
+            ##      distribution of seafloor depths. This is what is normally inputted into
+            ##      the LOSCAR carbon cycle model.
+            ## self.basins.bathymetryVolFraction : ["Basin0", "Basin1",...]. Each entry contains
+            ##      the precent basin volume, normalized to the volume of all ocean basins
+            ##      (excluding the high latitude ocean volume).
+            ## self.basins.bathymetryAreaFraction : ["Basin0", "Basin1",...]. Each entry contains
+            ##      the precent basin area, normalized to the total seafloor area (including
+            ##      the high latitude area).
+            self.basins.calculateBasinParameters()
+
+            # Apply bathymetry/VOC correction for present-day bathymetry model basin-by-basin
+            
+            
+            ## Define basin count
+            self.basinCnt = len(np.unique( self.basins.BasinIDA[~np.isnan(self.basins.BasinIDA)] ))
+
+            ## Define basin area and volume fractions
+            volBasin    = np.empty(self.basinCnt);
+            areaBasin   = np.empty(self.basinCnt);
+            for i in range(self.basinCnt):
+                areaBasin[i]    = np.sum( self.areaWeights[self.basins.BasinIDA==i] );
+                volBasin[i]     = np.sum( bathymetry[self.basins.BasinIDA==i]*self.areaWeights[self.basins.BasinIDA==i] );
+            
+            ## Use volume fraction of ocean to determine the fraction of ocean volume correction that should be applied to each basin
+            totalVolRes = (np.sum(volBasin)-VOCTarget)
+
+            ## Total basin volume fractions
+            volBasinFrac = volBasin/np.sum(volBasin);
+
+            ## Calculate percents to add to each bin then plot
+            sxbin_p = self.sxbin_p;
+            
+            ## Tracks the amount of ocean volume removed
+            basinVolumeRemoved = 0.0;
+            
+            ## Create logical to represent all values of depth_in in each bin (depthBinLogical)
+            randomDepthIndBin = {};
+
+            for i in range(self.basinCnt):
+                #depthBinLogical   =np.zeros(shape=(len(self.binEdges),len(bathymetry[self.basins.BasinIDA==i])));
+                 
+                for j in range(len(self.binEdges[1:])):
+
+                    # Note that depthBinLogical represents an (nx2) array with rows
+                    # representing indecies of points that lie within basini and 
+                    # self.binEdges[j] and self.binEdges[j+1] depths.
+                    # Note that self.binEdges values are in units of km.
+                    # Note that bathymetry is positive and in units of m.
+                    if j < len(self.binEdges):      # Contains depths between current bin and next bin
+                        depthBinLogical = np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&((1e-3)*bathymetry<self.binEdges[j+1])&(self.basins.BasinIDA==i) );
+                    else:                        # The last bin which contains depths below bins_in(end)
+                        depthBinLogical =   np.argwhere( ((1e-3)*bathymetry>=self.binEdges[j])&(self.basins.BasinIDA==i) );
+                    
+                    verbose2 = False
+                    if verbose2:
+                        cnt = 0;
+                        for pointi in depthBinLogical:
+                            if cnt < 10:
+                                print("Basin-{0}_Bin-{1}_to_{2}".format(i, self.binEdges[j], self.binEdges[j+1]),
+                                    bathymetry[pointi[0], pointi[1]] )
+                            else:
+                                break
+                            cnt+=1;
+                        print("\n")
+                    
+                    # Random_depth_ind represents random depths to modify
+                    # This has a very minor effect on bathymetry distributions input
+                    # into LOSCAR.
+                    # randomDepthIndBin is a dictionary that contains the entries for each
+                    # basin and bathymetry bin, specifically the corresponding indices
+                    # within the bathymetry array.
+                    randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(i, self.binEdges[j], self.binEdges[j+1])] = depthBinLogical
+                    np.random.shuffle(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(i, self.binEdges[j], self.binEdges[j+1])])                
+
+            ## Factors which dictate the percentage of ocean volume movement
+            ## from bins with excess ocean volume
+            bin_redis_faction = cp.deepcopy(sxbin_p);
+            bin_redis_faction[bin_redis_faction<0]=0;
+            bin_redis_faction = bin_redis_faction/np.sum(bin_redis_faction);
+            
+            ## Iterate over basins
+            for basini in range(self.basinCnt):
+
+                ## Find values to be changed in basini
+                logicalBasini = (self.basins.BasinIDA==basini);
+            
+                ## Define the volume reduction required in basini.
+                volReduction = totalVolRes*volBasin[basini]
+
+                ## Set values 
+            
+                ## Iterate over bin depths
+                if verbose:
+                    print("Basin ", basini)
+                for j in range(len(self.binEdges[1:])):
+
+                    ## Find the amount of ocean volume to be transfer between bin j (bins with
+                    ## excess ocean volume/area) and other bins (bins lacking ocean area representation).
+                    if sxbin_p[j] > 0:
+                        ## If bin has excess ocean area/volume
+
+                        ## Ocean volume to be removed through adding shallower depths than the current bin.
+                        sxbin_p_rm = sxbin_p[0:j];
+                        bini_redis_faction1 = ( sxbin_p_rm/np.sum( sxbin_p_rm[sxbin_p_rm<0] ) )*\
+                            (2-np.abs(np.sum( sxbin_p_rm[sxbin_p_rm<0])/sxbin_p[j]));
+                        ## Ocean volume to be added through adding deeper depths than the current bin.
+                        sxbin_p_add = sxbin_p[j+1:];
+                        bini_redis_faction2 = ( sxbin_p_add/np.sum( sxbin_p_add[sxbin_p_add<0] ) )*\
+                            np.abs(np.sum( sxbin_p_add[sxbin_p_add<0])/sxbin_p[j]);
+                        ## Ocean volume to be removed/added through adding shallower/deeper bins than the current bin
+                        bini_redis_faction = np.append(np.append(bini_redis_faction1,np.array(0.0)),bini_redis_faction2);
+
+                        if verbose:
+                            print(j, "Bin depth", self.binEdges[1+j],"; bini_redis_faction ", bini_redis_faction)
+
+                        ## Apply volume correction to each basini bin i.                       
+                        binVolume = 0.0;           # (re)set binVolume each time we change start bin (every j interation)
+                        jjj=0;                     # (re)set jjj each time we change start bin (every j interation)
+                        for jj in range(len(bini_redis_faction)):
+                            if bini_redis_faction[jj] > 0:
+                                # Calculate how much ocean volume residual is
+                                # represented in the lacking bin (bini_vol_residual)
+                                bini_vol_residual = totalVolRes*volBasinFrac[basini]*bin_redis_faction[j]*bini_redis_faction[jj];
+                                volumeChange = 0.0;
+                                
+                                # Note1: this chooses the option for how the bathymetry
+                                # should be redistrbuted to other bins.
+                                # Note2: Also, this code will not excute unless the
+                                # residual in bin (jj) constitutes <1% of the total
+                                # residual between constant ocean volume and model.
+                                opt_max_vol_trans = True;
+                                if opt_max_vol_trans & (bini_vol_residual>totalVolRes*1e-2):
+                                    max_ind = np.shape(randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])])[0];
+
+                                    while volumeChange < bini_vol_residual:
+                                        # (WORKING PROGRESS)
+                                        # Reached ~100% of ocean volume at studied time or max indices at depth were move to other depths 
+                                        opt_redis_cutoff = False;
+                                        if opt_redis_cutoff & (np.nansum(bathymetry*self.areaWeights) < self.VOCTarget):
+                                            # print("Target global ocean volume is now predicted to be accurate for time. Some basins might be lacking basin volume representation compared to others.")
+                                            print("test1")
+                                            break
+                                        elif jjj == (max_ind-1):
+                                            # print("Max indices were reached. No more redistributions can be done to reconcile ocean volume.")
+                                            print("test2")
+                                            break
+                                        
+                                        # Select random ind from random ind vector - This value will then be changed
+                                        #   Note that ind is only random since randomDepthIndBin dictionary indices are
+                                        #   randomly ordered.
+                                        ind = randomDepthIndBin["Basin-{0:0.0f}_Bin-{1:0.0f}_to_{2:0.0f}".format(basini, self.binEdges[j], self.binEdges[j+1])][jjj];
+
+                                        # New depth - Choose depth randomly within bin or at maximum depth
+                                        bins_in_cal = np.hstack((1e3*self.binEdges, 1e3*self.binEdges[-1]-1))
+                                        new_depth = np.abs(np.array([bins_in_cal[jj]+1, bins_in_cal[jj-1]]));
+
+                                        # Find the min and max volume changes to new bin
+                                        #delta_vol = np.abs(self.areaWeights[self.basins.BasinIDA==basini][ind[0],ind[1]]*(np.abs(bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]])-new_depth));
+                                        delta_vol = np.abs(self.areaWeights[ind[0],ind[1]]*(np.abs(bathymetry[ind[0],ind[1]])-new_depth));
+
+                                        # Set new depth to the maximum volume change in water column
+                                        new_depth = new_depth[np.max(delta_vol)==delta_vol];
+
+                                        # Use the maximum volume change to new bin as new depth
+                                        if volumeChange+np.max(delta_vol)<=bini_vol_residual:
+                                            # Append the volume change to lacking bin
+                                            volumeChange = volumeChange+np.max(delta_vol);
+                                            # Append the depth to that of the lacking bin
+                                            # FIXME: Check if this value should be positive of negative.
+                                            #bathymetry[self.basins.BasinIDA==basini][ind[0],ind[1]]= np.abs(new_depth);
+                                            bathymetry[ind[0],ind[1]]= np.abs(new_depth);
+                                            # Move to next random index of the over represented ocean volume bin
+                                            jjj=jjj+1;
+                                        else:
+                                            # Scenario where depth cannot be added with
+                                            # out exceeding the residual volume
+                                            # correction for that bin
+                                            print("test3")
+                                            break
+
+                                # Tracks the amount of ocean volume removed
+                                basinVolumeRemoved += volumeChange;
+                                binVolume += bini_vol_residual;
+            # Report
+            if verbose:
+                # Create bathymetry histogram (for model at 0 Ma) that includes VOC corrections
+                self.bathymetryAreaDistVOCcorrection, self.bathymetryAreaDist_wHighlatVOCcorrection, self.binEdges = calculateBathymetryDistributionGlobal(bathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
+                # Create bathymetry histogram (for etopo)
+                self.bathymetryAreaDistEtopo, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.etopobathymetry, self.lat, 90, self.areaWeights, binEdges = None, verbose=False);
 
 
+                blues_cm = mpl.colormaps['Blues'].resampled(100)
+                plotFnc2(self.lat, self.lon, bathymetry,
+                         np.nansum(self.areaWeights[~np.isnan(bathymetry)]),
+                         np.nansum(self.areaWeights[~np.isnan(self.etopobathymetry)]),
+                         np.nansum(bathymetry*self.areaWeights),
+                         np.nansum(self.etopobathymetry*self.areaWeights),
+                         self.binEdges, self.bathymetryAreaDistVOCcorrection, self.bathymetryAreaDistEtopo,
+                         outputDir = os.getcwd(),
+                         fidName = "plotGlobal-VOCCorrection.png",
+                         cmapOpts={"cmap":blues_cm,
+                                   "cbar-title":"cbar-title",
+                                   "cbar-range":[np.nanmin(np.nanmin(bathymetry)),np.nanmean(bathymetry)+2*np.nanstd(bathymetry)]},
+                         pltOpts={"valueType": "Bathymetry",
+                                  "valueUnits": "m",
+                                  "plotTitle":"",
+                                  "plotZeroContour":False},
+                         saveSVG=False,
+                         savePNG=True);
 
-        return 0, 0
+        return bathymetry, sxbin_p
 
         print('working progress')
 
