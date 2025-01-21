@@ -990,7 +990,12 @@ class BathyRecon():
             self.topography[np.isnan(self.oceanLithAge['z'][:].data)] = self.paleoDEM['z'][:].data[np.isnan(self.oceanLithAge['z'][:].data)]
 
             # 4. Add eustatic sea-level curve to represent flooding.
-            self.topography, ESLi = self.getESL(self.topography, reconAge, factor=1, verbose=False);
+            # Note that this change in sea-level is only applied over ocean
+            # seafloor modeled with seafloor ages (i.e., seafloor represented
+            # by paleoDEMs is not changed). The sealevel is also applied at
+            # 65% of its value which is consistent with continental flooding
+            # (see https://www.earthbyte.org/webdav/ftp/Data_Collections/Scotese_Wright_2018_PaleoDEM/Scotese_Wright2018_PALEOMAP_PaleoDEMs.pdf) 
+            self.topography, ESLi = self.getESL(self.topography, self.oceanLithAge['z'][:].data, reconAge, factor=.65, verbose=False);
 
             # 5. Close the ocean lithospheric age grids netCDF4
             self.oceanLithAge.close()
@@ -1041,50 +1046,163 @@ class BathyRecon():
                     basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
                 elif reconAge == 5:
                     # Merge basins north of Atlantic
-                    basins.mergeBasins(0,[1,2,3,4,5,6,7,23,27,29,30,36,38,40,42,43,44,45,46,47,52,55,56,58,60,62,63,64,65,67], write=False)
+                    #basins.mergeBasins(0,[1,2,3,4,5,6,7,23,27,29,30,36,38,40,42,43,44,45,46,47,52,55,56,58,60,62,63,64,65,67], write=False)
                     # Merge basins north of Atlantic with Atlantic.
                     # Note the new basinIDs
-                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,20,21,22,23,25], write=False)
+                    #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,20,21,22,23,25], write=False)
                     # Merge basins for Pacific ocean.
                     # Note the new basinIDs
-                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
+                    #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
+                    pass
                 elif reconAge == 10:
                     # Merge basins north of Atlantic
-                    basins.mergeBasins(0,[1,2,3,4,5,6,7,14,30,33,35,36,37,38,43,47,49,50,52,53,54,55,56,57,58,59,60,64,65,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85], write=False)
+                    #basins.mergeBasins(0,[1,2,3,4,5,6,7,14,30,33,35,36,37,38,43,47,49,50,52,53,54,55,56,57,58,59,60,64,65,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85], write=False)
                     # Merge basins north of Atlantic with Atlantic.
                     # Note the new basinIDs
-                    basins.mergeBasins(1,[2,3,4,5,6,8,10,11,12,13,14,15,16,17,18,19,20,23,24,27,28], write=False)
+                    #basins.mergeBasins(1,[2,3,4,5,6,8,10,11,12,13,14,15,16,17,18,19,20,23,24,27,28], write=False)
                     # Merge basins for Pacific ocean.
                     # Note the new basinIDs
-                    basins.mergeBasins(2,[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
+                    #basins.mergeBasins(2,[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
                     pass
                 elif reconAge == 15:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[1,17,25,26,28,31,39,45,47,49,50,52,53,56,61,62,63,64,65,66,67,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85,86,88,89,90,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,16,17,18,19,20,24,25,26,27,28,29,30,31,32,33,34,38,39,40,41,43,44,45], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
                     pass
                 elif reconAge == 20:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 25:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 30:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 35:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 40:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 45:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 50:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 55:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 60:
+                    # Merge basins north of Atlantic
+                    basins.mergeBasins(0,[0,1,2,3,4,5,6,7,8,9,15,16,19,20,21,37,44,46,49,51,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68,69,70,71,72,76,77,79,81,82,84,87,88,89,90,91,92], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,11,12,13,14,17,18,19,21,24,25,27,28,30,32,33], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19], write=False)
                     pass
                 elif reconAge == 65:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 70:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 75:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 elif reconAge == 80:
+                    # Merge basins north of Atlantic
+                    #basins.mergeBasins(0,[], write=False)
+                    # Merge basins north of Atlantic with Atlantic.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(1,[], write=False)
+                    # Merge basins for Pacific ocean.
+                    # Note the new basinIDs
+                    #basins.mergeBasins(2,[], write=False)
                     pass
                 print("working progress")
 
@@ -1146,7 +1264,7 @@ class BathyRecon():
             self.VOCTarget = self.getVOCi(reconAge);
 
             # 11b. Apply the ocean volume correction based on the misfit of present-day
-            # distributions and the expected paleo ocean volume.
+            # distributions and the expected paleo ocean volume.            
             if reconAge == 0:
                 self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
             else:
@@ -1161,11 +1279,35 @@ class BathyRecon():
                     # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
                     pass
             
+            # 11c. Assign the VOC corrected bathymetry to the basins object
+            self.basins.bathymetry = self.bathymetry;
+            
 
-            # 12. Save bathymetry model w/ the ocean volume corrections
+            # 12. Save bathymetry model (w/ the ocean volume corrections) in standardized ExoCcycle outputs.
+
+            # 12a. Calculate basin bathymetry parameters
+            # Note: the basin bathymetry distributions will be calculated
+            # with volume corrected bathymetry since self.basins.bathymetry
+            # was updated with the ocean basin volume corrected bathymetry.
+            self.basins.calculateBasinParameters(verbose=True)
+
+            # 12b. Calculate basin connectivity parameters
+            # Note: the ocean basin volume correction is applied but basin
+            # connectivity parameters are calculated with the original
+            # (non-VOC corrected) bathymetry. Therefore, there will be some
+            # inconsistencies between basin connectivity parameters and
+            # bathymetry distributions.
+            self.basins.calculateBasinConnectivityParameters(verbose=True)
+
+            # 12c. Expand original bathymetry netCDF4 file by writting a new basin bathymetry
+            # netCDF4 file that also contains basin bathymetry parameters.
+            self.basins.saveCcycleParameter(verbose=True);
+            
+
+
 
             # Report
-            '''
+            
             if verbose:
                 blues_cm = mpl.colormaps['Blues'].resampled(100)
                 self.highlatlat = 90
@@ -1185,7 +1327,7 @@ class BathyRecon():
                                               "plotZeroContour":False},
                                      saveSVG=False,
                                      savePNG=False)
-            '''
+            
 
     def getVOCi(self, age):
         """
@@ -1524,7 +1666,7 @@ class BathyRecon():
         ## Return depth
         return topography
 
-    def getESL(self, topography, age, factor=1, verbose=True):
+    def getESL(self, topography, seafloorAge, age, factor=1, verbose=True):
         '''
         getESL method is used to a obtain the eustatic sealevel
         change with respect to present-day.
@@ -1535,6 +1677,11 @@ class BathyRecon():
         topography : NUMPY ARRAY
             nx2n global array of topography, in m, modified with the
             eustatic change in sealevel.
+        seafloorAge : NUMPY ARRAY
+            nx2n global array of seafloor ages, in Myr. Any area where
+            seafloor ages are not represented -either due to lack of
+            data, the non-existance of seafloor, or non-thermally
+            subsiding seafloor- should be represented with np.nan values. 
         age : FLOAT
             The age, in Myr, at which that user wants to read a
             ESL from.
@@ -1563,7 +1710,10 @@ class BathyRecon():
         Haq_87_SL_temp = self.ESL.loc[np.abs(self.ESL['Ma']-age)<resolution]['m'].values[0]
 
         # Modify the topography with sealevel
-        topography[~np.isnan(topography)] -= Haq_87_SL_temp*factor;
+        # Note that this change in sea-level is only applied over ocean
+        # seafloor modeled with seafloor ages (i.e., seafloor represented
+        # by paleoDEMs is not changed).
+        topography[~np.isnan(seafloorAge)] -= Haq_87_SL_temp*factor;
 
         # Report
         if verbose:
@@ -1676,8 +1826,15 @@ class BathyRecon():
 
     def addVOCCorrection(self, age, bathymetry, VOCTarget, resolution, verbose=True):
         '''
-        addVOCCorrection 
-        FIXME: add appropriate description.
+        addVOCCorrection method will calculate the depth binned bathymetry
+        misfit between etopo and present-day reconstructions. The misfit 
+        is then used with ocean basin volume misfit to determine changes
+        to seafloor bathymetry which reproduce accurate ocean basin volumes
+        that are consistent with reducing the misfit between etopo and 
+        modeled bathymetry. The present-day model and etopo misfit can then
+        be used for past reconstructions, given a target ocean basin volume,
+        such that ocean basin volume is appropriately reconstructed with
+        realistic changes to modeled bathymetry.
         
         Parameters
         -----------
@@ -1905,30 +2062,6 @@ class BathyRecon():
             if saveSVG:
                 plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
                     
-
-        def applyVOCCorrection(correctionDist, bathymetry, VOCTarget, VOCi):
-            """
-            applyVOCCorrection will use a distribution (correctionDist) to
-            determine what ocean depths should be (removed or added) from
-            a 2D global array of bathymetry. bathymetry will change such
-            that the total basin volume VOC is equal to VOCtarget.
-
-            Parameters
-            -----------
-            bathymetry : NUMPY ARRAY
-                nx2n global array of bathymetry, in m.
-            VOCTarget : FLOAT
-                The target ocean basin volume to reconstruct. Bathymetry
-                distributions will be modified based on present-day mismatch
-                in modeling the bathtmetry distribution.
-
-            Returns
-            --------
-            bathymetry : NUMPY ARRAY
-                nx2n global array of bathymetry, in m.
-
-            
-            """
 
         # If the bathymetry is representing present day then calculate
         # the correction distribution to apply to all later paleo

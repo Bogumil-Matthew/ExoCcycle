@@ -23,8 +23,7 @@ from matplotlib.colors import LinearSegmentedColormap
 
 
 # For progress bars
-from tqdm import tqdm
-
+from tqdm.auto import tqdm # used for progress bar
 
 from ExoCcycle import Bathymetry # type: ignore
 
@@ -547,7 +546,7 @@ class Basins():
             pos = np.zeros( (2, len(~np.isnan(bathymetryf))) );
             for i in tqdm( range(len(self.lonf)) ):
                 bathymetryi = bathymetryf[i];
-                areaWeighti = areaWeightsf[i]
+                areaWeighti = areaWeightsf[i];
                 if (~np.isnan(bathymetryi)):
                     points[int(cnt)] = (self.latf[i], self.lonf[i], bathymetryi, areaWeighti);    # (latitude, longitude, depth, areaWeight) w/ units (deg, deg, m, m2)
                     pos[:,int(cnt)] = np.array( [self.latf[i], self.lonf[i]] ); 
@@ -565,7 +564,7 @@ class Basins():
 
             ## Set bathymetry vector corresponding to node 
             nodebathymetryf = ~np.isnan(bathymetryf);
-            nodeCntList = np.arange(0,len(pos[0,:]),1)
+            nodeCntList = np.arange(0,len(pos[0,:]),1);
 
             ## Iterate through each node
             for node1, values1 in tqdm(points.items()):

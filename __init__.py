@@ -12,7 +12,7 @@ Created on Tue Sep  6 15:20:00 2024
 
 # Import modules used in the slab model module.
 import copy as cp
-from tqdm import tqdm  # used for sm_make_slab progress bar
+from tqdm.auto import tqdm # used for progress bar
 import sys
 import os
 import numpy as np
