@@ -759,12 +759,11 @@ class Basins():
                 plt.title("Geographic Network of points")
                 plt.show()
 
-
     def findCommunities(self, method = "Louvain", minBasinCnt=1):
         """
-        findCommunities uses the Girvan-Newman algorithm to determine
-        communities of nodes (basins). Then nodes of similar basins
-        are given a basinID.
+        findCommunities uses the Girvan-Newman or Louvain community
+        detection algorithm to determine communities of nodes (basins).
+        Then nodes of similar basins are given a basinID.
 
         
         Parameter
@@ -803,8 +802,8 @@ class Basins():
         # Set node attribute (basinIDs)
 
         ## Set the amount of unique basinIDs equal to the count
-        ## of unique communities that the Girvan-Newman algorithm
-        ## found. This is not always equal to the minBasinCnt 
+        ## of unique communities that the Girvan-Newman or Louvain
+        ## algorithm found. This is not always equal to the minBasinCnt 
         basinIDTags = np.arange(len(self.communitiesFinal));
 
         basinIDs = {}; cnt = 0;
@@ -814,8 +813,6 @@ class Basins():
                 basinIDs[nodeID] = {"basinID": basinIDi};
             cnt+=1;
         nx.set_node_attributes(self.G, basinIDs, "basinID");
-
-
 
     def createCommunityNodeColors(self, verbose=False):
         """
@@ -1098,8 +1095,8 @@ class Basins():
         """
         mergeBasins method will merge basins with basin ID of basinID2
         to basins with ID basinID1. The resulting basin network is then
-        rewitten, overriding the original basinID network. Note that
-        there is no need to reread the basin network. 
+        rewitten to the original, overriding the original basinID network.
+        Note that there is no need to reread the basin network. 
 
         Parameters
         ----------
@@ -1108,11 +1105,11 @@ class Basins():
         basinID2 : INT, or LIST OF INT
             Basin ID(s) to be absorbed by basinID1.
         write : BOOLEAN
-            An option to write over the original network.
+            An option to write over the original network. The default is False.
         
-        Returns
-        --------
-        None.
+        Re(defines)
+        ------------
+        self.G's basinID node attribute.
         """
 
         ##########################
@@ -1155,6 +1152,432 @@ class Basins():
         else: 
             print("Network has not been overwritten. New network only exist within this object instance.")
 
+    def mergeSmallBasins(self, threshold, thresholdMethod, mergeMethod, write=False):
+        """
+        mergeSmallBasins method will merge basins below some threshold
+        surface area with the closest basins of above that same threshold.
+        The resulting basin network is then rewitten to the original,
+        overriding the original basinID network. Note that there is no
+        need to reread the basin network. 
+
+        Parameters
+        ----------
+        threshold : FLOAT
+            Basins smaller than this threshold, in [m2] or [%] of total
+            seafloor area will be merged with the closest basin above
+            this threshold in size.
+        thresholdMethod : STRING
+            A string that defines the input type for threshold. This should
+            either be set to 'm2' or '%'.
+        mergeMethod : STRING
+            A string that defines the method to merge small basins with larger
+            basins. This can either be set to 'centroid' or 'nearBasinEdge'.
+            'centroid' will merge the small basin with nearest centroid of a
+            large basin. 'nearBasinEdge' will compare the small basin centroid
+            with the distance to all nodes. The small basin will then be assigned
+            the same basin ID as the closest node part of a large basin. 
+        write : BOOLEAN
+            An option to write over the original network. The default is False.
+        
+        Re(defines)
+        ------------
+        self.G's basinID node attribute.
+        """
+
+
+        ##########################
+        ### Merge basins Model ###
+        ##########################
+        # Define area scalar for thresholdMethod
+        if thresholdMethod == '%':
+            # Set methodScalar to AOC (total ocean surface) since we are
+            # comparing with surface area in %.
+            methodScalar = self.AOC/100;
+        elif thresholdMethod == 'm2':
+            # Set methodScalar to 1 since we are comparing with surface
+            # area in meters.
+            methodScalar = 1;
+
+        # Define the number of define basins
+        BasinIDmax = self.G
+        distance = 1e20;
+
+        # Get basin properties from nodes
+        nodesID = nx.get_node_attributes(self.G, "basinID");          # Dictionary of nodes and their basinID
+        nodePos = nx.get_node_attributes(self.G, "pos");            # Dictionary of nodes and their positions (lat,lon) [deg, deg]
+        nodesAWm2 = nx.get_node_attributes(self.G,'areaWeightm2');  # Dictionary of nodes and their area [m2]
+
+
+        # Set all node basin ids and position in an array
+        nodeBasinID = np.zeros( (len(self.G)), dtype=float );       # Array to hold node basinIDs
+        nodePosA = np.zeros((len(self.G), 2), dtype=float );        # Array to hold basini node positions (lat,lon) [deg, deg]
+        for nodeID in nodesID:
+            # Set node basin ID to array entry
+            nodeBasinID[int(nodeID)] = nodesID[float(nodeID)]['basinID'];
+            # Set node position to array entry
+            nodePosA[int(nodeID),:] = nodePos[float(nodeID)][:];
+
+        # Set unique ids
+        nodeBasinIDUnique = np.unique(nodeBasinID);
+
+        # Get basin i areas & Calculate basin centroids (latitudes and
+        # longitudes weighted by surface area of the node)
+        basinArea = np.zeros(len(nodeBasinIDUnique));               # Array to hold basini area [m2]
+        LatCentroid = np.zeros(len(nodeBasinIDUnique));             # Array to hold basini centroid latitude [deg]
+        LonCentroid = np.zeros(len(nodeBasinIDUnique));             # Array to hold basini centroid longitude [deg]
+        for i, basinID, nodePosi in zip(nodesAWm2, nodeBasinID, nodePosA):
+            basinArea[int(basinID)] += nodesAWm2[i];                # Add node i to basinID basinArea area sum [m2].
+            LatCentroid[int(basinID)] += nodePosi[0]*nodesAWm2[i]   # Add node i to basinID (basinArea area)*(latitude) sum [deg*m2].
+            LonCentroid[int(basinID)] += np.deg2rad(nodePosi[1])*nodesAWm2[i]   # Add node i to basinID (basinArea area)*(longitude) sum [rad*m2]. Note that this radian conversion only works for data on [-180,180], not [0,360]
+
+        ## Divide by the basinAreas to complete the calculation of area weighted centorids
+        LatCentroid = LatCentroid/basinArea;                # Latitude basin centroid [deg]
+        LonCentroid = np.rad2deg(LonCentroid/basinArea);    # Longitude basin centroid [deg]
+
+        # Calculate the distance between all centroids
+        ## Empty symmetric matrix representing distance between centroids.
+        basinCentroidDist = np.zeros((len(LonCentroid),len(LatCentroid))); # [radians]
+        ## Empty symmetric matrix representing distance between centroids.
+        basinMergeAllowed = np.zeros((len(LonCentroid),len(LatCentroid)), dtype='bool'); # [boolean]
+        ## Calculate distance between points
+        ## Iterate over all points.
+        for i in range(len(LatCentroid)):
+            ## Iterate over all points again.
+            for j in range(len(LatCentroid)):
+                ## Only do calculation if point matches are not the same
+                ## and are unique.
+                if i<j:
+                    # Calculate the distance between centroids
+                    # Note that the spherical radius can be set to 1 since
+                    # we are only concerned with finding the closest basin.
+                    # The actual magnitude of the distance is irrelevant.
+                    basinCentroidDist[i,j] = haversine_distance(LatCentroid[i],
+                                                                LonCentroid[i],
+                                                                LatCentroid[j],
+                                                                LonCentroid[j],
+                                                                radius=1)
+                    # Set the symmetric entry
+                    basinCentroidDist[j,i] = basinCentroidDist[i,j];
+                
+                    # Set whether connecting i to j would be connecting it to a
+                    # basin larger than the threshold.
+                    if basinArea[j]/methodScalar >= threshold:
+                        # Receiving basin is larger than threshold
+                        basinMergeAllowed[i,j] = True;
+                    else:
+                        # Receiving basin is smaller than threshold
+                        basinMergeAllowed[i,j] = False;
+
+                    if basinArea[i]/methodScalar >= threshold:
+                        # Giving basin is larger than threshold
+                        basinMergeAllowed[j,i] = True;
+                    else:
+                        # Giving basin is smaller than threshold
+                        basinMergeAllowed[j,i] = False;
+
+                elif i==j:
+                    # Set diagonal entries to np.nan. This allows for simplified
+                    # code later on.
+                    basinCentroidDist[i,j] = np.nan;
+                    # Set diagonal entries to False since a basin cannot be connect
+                    # to itself.
+                    basinMergeAllowed[j,i] = False;
+
+
+        # Define an array with columns (oldBasinID, newBasinID)
+        # that describes how basinID should be changed
+        basinIDTrans = np.zeros( (len( basinArea[basinArea/methodScalar < threshold] ), 2), dtype=float );
+        basinIDTrans[:]= np.nan
+        basinMatchCnt = 0;
+
+        # Iterate over all unique basin IDs
+        for i in range(len(nodeBasinIDUnique)):
+            # Basin id
+            basinIDi = nodeBasinIDUnique[i];
+            # If node i's basin is smaller than threshold.
+            if (basinArea[i]/methodScalar < threshold):
+
+                if mergeMethod == 'centroid':
+                    # Select centroid distances for basin mergers
+                    basiniCentroidDist = basinCentroidDist[i,:];
+
+                    # Remove centroid distances that allow merger with
+                    # basin below threshold size.
+                    basiniCentroidDist[ ~basinMergeAllowed[i,:] ] = np.nan;
+                    
+                    # Find the basin ID to merge basinIDi into
+                    basinIDnew = np.argwhere(basiniCentroidDist == np.nanmin(basiniCentroidDist))[0][0];
+
+                elif mergeMethod == 'nearBasinEdge':
+                    # Find distance from centroid to every other node
+                    Distance = haversine_distance(LatCentroid[i],
+                                                  LonCentroid[i],
+                                                  nodePosA[:,0],
+                                                  nodePosA[:,1],
+                                                  radius=1);
+
+                    # Find the smallest distance to basin that is greater than
+                    # threshold size
+                    # True if distance is smallest
+                    #     logical2 = (Distance == np.nanmin(Distance));
+                    # True if nodes are part of basins greater than the threshold
+                    #     logical1 basinArea[[nodeBasinID]]/methodScalar >= threshold
+                    logical1 = (basinArea[nodeBasinID.astype(int)]/methodScalar >= threshold);
+                    logical2 = (Distance[logical1] == np.nanmin(Distance[logical1]));
+
+                    basinIDnew = nodeBasinID[logical1][logical2][0]
+
+
+                # Add to matches
+                basinIDTrans[basinMatchCnt,:] = np.array([basinIDi, basinIDnew]);
+                basinMatchCnt+=1;
+        
+
+        # Merge all the matched basinIDs
+        # Change basin id(s) basinIDTrans[0] to basinIDTrans[1] (not in nodes yet)
+        # Change basin id(s) basinID2 to basinID1 (not in nodes yet)
+        if np.size(basinIDTrans) == 2:
+            # basinIDTrans[0,0] is converted to basinIDTrans[0,1].
+            nodeBasinID[nodeBasinID==basinIDTrans[0,0]] = basinIDTrans[0,1];
+        else:
+            # Multiple (list) of basinIDs to convert to basinIDTrans[0,i].
+            for basinIDold, basinIDnew in basinIDTrans:
+                nodeBasinID[nodeBasinID==basinIDold] = basinIDnew;
+        
+        # Reset basin ID indexing
+        uniqueIDs = np.unique(nodeBasinID);
+        for i in range(len(uniqueIDs)):
+            nodeBasinID[nodeBasinID==uniqueIDs[i]] = float(i);
+        
+        # Set basin id to new merged basin
+        basinIDs = {};
+        for nodeID in self.G:
+            basinIDs[int(nodeID)] = {"basinID": nodeBasinID[int(nodeID)]};
+            
+        nx.set_node_attributes(self.G, basinIDs, "basinID");
+
+        ###########################
+        ### Write network Model ###
+        ###########################
+        if write:
+            print("Network has been overwritten.")
+            nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
+        else: 
+            print("Network has not been overwritten. New network only exist within this object instance.")
+
+    def orderBasins(self, order, write=False):
+        """
+        orderBasins method will reorder the basin IDs in accordance with
+        some input list.
+
+        Parameters
+        ----------
+        order : LIST
+            List of basin IDs, where the entry's index corresponds to new
+            basinID. The value of the entry corresponds to the current basinID.
+            For example, this might look like [2,0,1], meaning basin2->basin0,
+            basin0->basin1, and basin1->basin2.
+        write : BOOLEAN
+            An option to write over the original network. The default is False.
+        
+        Re(defines)
+        ------------
+        self.G's basinID node attribute. 
+
+        """
+        ##########################
+        ### Merge basins Model ###
+        ##########################
+        # Get all node basin ids 
+        nodeBasinID = np.zeros( (len(self.G)), dtype=float );
+        nodes = nx.get_node_attributes(self.G, "basinID");
+        for nodeID in nodes:
+            nodeBasinID[int(nodeID)] = nodes[float(nodeID)]['basinID'];
+        
+        # Define the total number of basinIDs
+        uniqueIDCnt = len(np.unique(nodeBasinID));
+
+        # Change basinID ordering 
+        for i in range(len(order)):
+            originalID  = order[i];
+            newID       = uniqueIDCnt+i;
+            # Update basinID
+            nodeBasinID[nodeBasinID==originalID] = newID;
+
+        # Reset basin ID indexing
+        uniqueIDs = np.unique(nodeBasinID);
+        for i in range(len(uniqueIDs)):
+            nodeBasinID[nodeBasinID==uniqueIDs[i]] = float(i);
+
+        # Set basin id to new ordered basin IDs
+        basinIDs = {};
+        for nodeID in self.G:
+            basinIDs[int(nodeID)] = {"basinID": nodeBasinID[int(nodeID)]};
+            
+        nx.set_node_attributes(self.G, basinIDs, "basinID");
+
+    def applyMergeBasinMethods(self, mergerID, mergerPackage, maxBasinCnt=1e5):
+        '''
+        applyMergeBasinMethods function takes a ExoCcycle basins object a
+        mergerID and mergerPackage to merge basins defined by a predetermined
+        merger strategy. Some of these have been define by the creators of
+        ExoCcycle, but every other strategy must be defined as shown below
+
+
+        Parameters
+        -----------
+        mergerID : INT
+            An ID that describes the basins merges to take place as described
+            in mergerPackage
+        mergerPackage : DICTIONARY
+            A dictionary that describes the general merger strategy and strategy
+            for a given mergerID. It can be constructed as follows. The following
+            package first merges basins that represent 0.1% then 0.5% of total
+            basin surface area into the closest basin bigger than 0.1% and 0.5%.
+            Next, if mergerID=0 then mergers0 will merger basin 0 with 0,8,9,10,
+            basin 1 with ..., and basin 2 with ...
+            
+                mergerPackage = {'mergeSmallBasins': {'on':True,
+                                                    'threshold':np.array([.1,.5]),
+                                                    'thresholdMethod':'%',
+                                                    'mergeMethod':'nearBasinEdge'},
+                                'mergerID': np.array([0, 5, 10, 15, 20, 25]),
+                                'mergers0':  {'0':[0,8,9,10], '1':[...], '2':[...] },
+                                'mergers5':  {'0':[...], '1':[...], '2':[...] },
+                                'mergers...':{'0':[...], '1':[...], '2':[...] }
+                                }
+        maxBasinCnt : INT
+            Maximum number of basins to allow in a bathymetry
+            model. The default is 1e5.
+
+        Redefine
+        -------
+        self : EXOCCYCLE OBJECT
+            Object that describes the connection of nodes into basins by
+            way of a community detection algorithm. Now with merged basins
+            as described by mergerID and mergerPackage.                  
+        
+        '''
+        
+        # 1. Apply the small basin mergers
+        try:
+            if mergerPackage['mergeSmallBasins']['on']:
+                # Iterate over all the small basin merger thresholds.
+                for i in range(len(mergerPackage['mergeSmallBasins']['threshold'])):
+                    self.mergeSmallBasins(
+                        threshold      = mergerPackage['mergeSmallBasins']['threshold'][i],
+                        thresholdMethod= mergerPackage['mergeSmallBasins']['thresholdMethod'],
+                        mergeMethod    = mergerPackage['mergeSmallBasins']['mergeMethod']);
+        except:
+            pass;
+
+        if maxBasinCnt==1e5:
+            # Case: Merge basins by id
+            # 2. Merge basins by ID
+            try:
+                # If the mergerID exists within the mergerPackage mergerIDs then proceed
+                # with merging
+                if (mergerPackage['mergerID']==mergerID).any():
+                    for mainBasin in mergerPackage['mergers'+str(mergerID)]:
+                        self.mergeBasins(mainBasin,
+                                        mergerPackage['mergers'+str(mergerID)][mainBasin],
+                                        write=False);
+            except:
+                pass;
+            
+            # 3. Rearrange basins (ordering is useful to keep consistently through temporal reconstructions)
+            try:
+                # Id the mergerID exists within the mergerPackage mergerIDs then proceed.
+                if (mergerPackage['mergerID']==mergerID).any():
+                    basinOrder = mergerPackage['arrange'+str(mergerID)];
+                    self.orderBasins(basinOrder,
+                                    write=False);
+            except:
+                pass;
+        else:
+            # Case: Merge basins by the sum node edge weights
+            
+            # 
+            self.calculateBasinParameters(verbose=False);
+            
+            self.mergeSmallestConnection(maxBasinCnt=maxBasinCnt,
+                                         verbose=True);
+
+
+
+        # 4. Report results from merging
+        try:
+            # If the verbose option has been chosen then plot the merged basins
+            if mergerPackage['verbose']:
+                blues_cm = mpl.colormaps['Blues'].resampled(100)
+                self.visualizeCommunities( cmapOpts={"cmap":blues_cm,
+                                                    "cbar-title":"cbar-title",
+                                                    "cbar-range":[np.nanmin(np.nanmin(self.bathymetry)),
+                                                                    np.nanmean(self.bathymetry)+2*np.nanstd(self.bathymetry)]},
+                                            pltOpts={"valueType": "Bathymetry",
+                                                    "valueUnits": "m",
+                                                    "plotTitle":"{}".format(self.body),
+                                                    "plotZeroContour":True,
+                                                    "nodesize":1,
+                                                    "connectorlinewidth":1,
+                                                    "projection":"Miller"},
+                                            draw={"nodes":False,
+                                                "connectors":False,
+                                                "bathymetry":False,
+                                                "coastlines":True,
+                                                "gridlines":False,
+                                                "nodes-contour":True},
+                                            saveSVG=False,
+                                            savePNG=True)
+        except:
+            pass
+
+    def mergeSmallestConnection(self, maxBasinCnt, verbose=True):
+        """
+        mergeSmallestConnection merges smallest basins and strongest
+        connected basins with one another until maxBasinCnt number
+        of basins exist.
+
+        Parameters
+        ----------
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+        
+        """
+        # Define the starting number of basins
+        #BasinCnt = len(np.unique(self.BasinIDA))-1;
+
+        # Calculate connectivity and connective bathymetry distributions
+        # & Calculate the strength between basins self.basinConnectionWeight
+        self.calculateBasinConnectivityParameters(verbose=False)
+
+        # Iterate until desired number of basins is obtained
+        while self.basinCnt > maxBasinCnt:
+
+            # Find the connection with highest basinConnectionWeight
+            # Note that if np.argwhere(self.basinConnectionWeight, np.nanmax(self.basinConnectionWeight))
+            # = [4,5]. This means that basin 4 should be mergered into basin 5.
+            idx = np.argwhere(self.basinConnectionWeight == np.nanmax(self.basinConnectionWeight))[0]
+
+            
+            # Merge basin with 
+            self.mergeBasins(idx[1], idx[0], write=False);
+            
+            
+            # (Re)calculate basin and connectivity and connective bathymetry
+            # distributions & Calculate the strength between basins
+            # self.basinConnectionWeight
+            self.calculateBasinParameters(verbose=False);
+            self.calculateBasinConnectivityParameters(verbose=False)
+            
+
+
+        #self.calculateBasinConnectivityParameters(verbose=False)
+        if verbose:
+            print("self.basinConnectionWeight", self.basinConnectionWeight)
+            
+
+
     def saveBasinNetwork(self):
         """
         saveBasinNetwork method will overwrite the original basinID network
@@ -1168,7 +1591,6 @@ class Basins():
         ### Write network Model ###
         ###########################
         nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
-
 
     def calculateBasinParameters(self, binEdges=None, verbose=True):
         """
@@ -1222,14 +1644,13 @@ class Basins():
             that this distribution is calculated with the exclusion of high latitude
             distribution of seafloor depths. This is what is normally inputted into
             the LOSCAR carbon cycle model.
-        self.binEdges : NUMPY LIST, optional
+        self.binEdges : NUMPY LIST
             A numpy list of bin edges, in km, to calculate the bathymetry distribution
             over. Note that anything deeper than the last bin edge will be defined within
             the last bin.
         self.BasinParametersDefined : BOOLEAN
             Set to True to indicate that basin bathymetry parameters have been defined.
             
-
         Returns
         --------
         None.
@@ -1256,7 +1677,7 @@ class Basins():
             BasinIDA[(lonA==pos[nodei,1])&(latA==pos[nodei,0])] = BasinID[nodei];
 
         # Calculate basin distributions
-        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, lonA, BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, verbose=verbose)
+        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaFractionG, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, lonA, BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, verbose=verbose)
         
         # Define basinID and nodeid array
         self.BasinIDA = BasinIDA;
@@ -1265,6 +1686,7 @@ class Basins():
         self.bathymetryAreaDistBasin = bathymetryAreaDistBasin
         self.bathymetryVolFraction   = bathymetryVolFraction
         self.bathymetryAreaFraction  = bathymetryAreaFraction
+        self.bathymetryAreaFractionG = bathymetryAreaFractionG
         self.bathymetryAreaDist_wHighlatG = bathymetryAreaDist_wHighlatG
         self.bathymetryAreaDistG = bathymetryAreaDistG
         self.binEdges                = binEdges
@@ -1313,21 +1735,17 @@ class Basins():
         self.basinAreaConnection : NUMPY ARRAY
             A self.basinCnt x self.basinCnt matrix that enumerate the connections
             between basins. This is a useful book keeping attribute. 
+        self.basinConnectionWeight : NUMPY ARRAY
+            A self.basinCnt x self.basinCnt matrix holds weights describing how
+            well connected two basins are. The connection strength is calculated
+            based on connective bathymetry on a set of rules described within
+            the body of code.
         self.bathymetryConDist : NUMPY ARRAY
             A self.basinCnt x self.basinCnt x (binEdges-1) matrix that holds area
-            weighted bathymetry distributions of connectivity bathymetry between
+            weighted bathymetry distributions of connective bathymetry between
             basins. Distributions sum to 100%. 
         self.basinConnectionDefined : BOOLEAN
             Set to positive to indicate basin connectivity parameters are calculated.
-
-
-        self.basinAreaConnection : NUMPY ARRAY
-            An area weighted array that describes the surface area
-            connection between all basins (e.g., a 3x3 would describe
-            the surface connection between 3 basins).
-        self.ARRAY2 : NUMPY ARRAY
-            A 3x3xlen(binEdges) size array with each entry in the 3x3
-            array representing bathymetry distributions.
         """
         ############################################################
         ##### Find the connectivity between each set of basins #####
@@ -1393,7 +1811,7 @@ class Basins():
         # Define basinAreaConnection, a matrix which will hold an
         # enumeration of the connections between basins.
         self.basinAreaConnection = np.zeros((self.basinCnt,self.basinCnt), dtype=float);
-        # Define basinAreaConnectionTracker, which keeps track if the 
+        # Define self.basinAreaConnectionTracker, which keeps track of the 
         # symmetric basin connection (e.g., Atlantic-Indian for Indian-Atlantic)
         # has already been defined.
         basinAreaConnectionTracker = np.ones((self.basinCnt,self.basinCnt), dtype=bool);
@@ -1489,7 +1907,7 @@ class Basins():
         if binEdges is None:
             binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
     
-        # Setup dictionary to hold basin distributions.
+        # Setup array to hold connective bathymetry distributions.
         #self.bathymetryConDist = {};
         self.bathymetryConDist = np.zeros( (self.basinCnt, self.basinCnt, len(binEdges)-1) ,dtype=float)
     
@@ -1497,15 +1915,36 @@ class Basins():
         ## Iterate over basin connections
         for connectionIDi in range(len(self.connectingNodes)):
             # Calculate a basin connection bathymetry distributions.
-            bathymetryConDisti, binEdges = np.histogram((1e-3)*self.connectiveBathy[connectionIDi],
-                                                             weights = self.connectiveAreaW[connectionIDi],
+            bathymetryConDisti, binEdges = np.histogram((1e-3)*self.connectiveBathy[int(connectionIDi)],
+                                                             weights = self.connectiveAreaW[int(connectionIDi)],
                                                              bins=binEdges);
             # Add the distribution information to dictionary.
-            #self.bathymetryConDist['Connection{:0.0f}'.format(connectionIDi)] = 100*(bathymetryConDisti/np.sum(bathymetryConDisti));
-            # 
-            for symmeticIndex in np.argwhere(self.basinAreaConnection == connectionIDi):
+            for symmeticIndex in np.argwhere(self.basinAreaConnection == int(connectionIDi)):
                 self.bathymetryConDist[ symmeticIndex[0], symmeticIndex[1] ] = 100*(bathymetryConDisti/np.sum(bathymetryConDisti));
         
+        ############################################################
+        ############### Calculate connection weights ###############
+        ############################################################
+        ## Define basinConnectionWeight
+        self.basinConnectionWeight = np.zeros( (self.basinCnt, self.basinCnt), dtype=float)
+
+        ## Iterate over basin connections
+        for connectionIDi in range(len(self.connectingNodes)):
+            
+            # Define the connection area (size).
+            areaofConnection =  np.sum(self.connectiveAreaW[connectionIDi]);
+
+            for symmeticIndex in np.argwhere(self.basinAreaConnection == int(connectionIDi)):
+                ## Iterate over symmetric IDs
+                # Define basins' area (size)
+                areaofBasin1 =      self.bathymetryAreaFractionG["Basin{}".format(symmeticIndex[0])];
+                areaofBasin2 =      self.bathymetryAreaFractionG["Basin{}".format(symmeticIndex[1])];
+                
+                # Set weight
+                self.basinConnectionWeight[ symmeticIndex[0], symmeticIndex[1] ] = (1/areaofBasin1)*np.nansum( areaofConnection*self.bathymetryConDist[ symmeticIndex[0], symmeticIndex[1] ]/100 );
+
+
+
 
         # Change class variable to indicate that basin connectivity
         # parameters have been defined.
@@ -1526,7 +1965,6 @@ class Basins():
             # Plot the basin IDs, connectivity nodes, and their
             # bathymetry distributions
             self.plotBasinConnections(pos, binEdges);
-
 
     def plotBasinConnections(self, pos, binEdges=None,
                              savePNG=False, saveSVG=False, outputDir = os.getcwd(), fidName = "plotBasinConnections.png"):
@@ -1658,8 +2096,6 @@ class Basins():
         if saveSVG:
             plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
             
-
-
     def saveCcycleParameter(self, verbose=True):
         """
         saveCcycleParameter method create a new netCDF4 containing 
@@ -1898,6 +2334,426 @@ class Basins():
 
 
 
+class BasinsSynth():
+    """
+    BasinsSynth is a class meant to construct basins and bathymetry properties
+    given a synthetic bathymetry model created with classes within the
+    Bathymetry module.
+    """
+
+    def __init__(self, dataDir, filename, radius):
+        """
+        Initialization of BasinsSynth class.
+
+        Parameter
+        ----------
+        dataDir : STRING
+            A directory which you will store local data within. Note that
+            this function will write to directories [data_dir]/bathymetries.
+        filename : STRING
+            Output file name 
+        radius : FLOAT
+            The radius of the synthetic planet bathymetry, in m.
+        
+        Define
+        ----------
+        self.bathymetry : NUMPY ARRAY
+        self.areaWeights : NUMPY ARRAY
+        self.lat : NUMPY ARRAY
+        self.lon : NUMPY ARRAY
+        self.radius : FLOAT
+
+        """
+
+        # Read netCDF4 bathymetry file
+        self.dataDir = dataDir;
+        self.filename = filename;
+
+        # Set Planet radius
+        self.radius = radius;
+
+        # Define class attributes to be redefined throughout analysis
+        ## Have basin connection been defined.
+        self.basinConnectionDefined = False;
+        ## Have basin bathymetry parameters been defined.
+        self.BasinParametersDefined = False;
+            
+    def setBathymetryBins(self, bathymetryBins):
+        '''
+        setBasinCnt is a method used to define the bathymetry
+        distibution bin edges.
+        
+        '''
+
+    def defineBasinParameters(self,
+                              BasinCnt = 3,
+                              Distribution = None,
+                              binEdges = None,
+                              AOC = None,
+                              VOC = None,
+                              fanoc=np.array([.30, .30, .30, .10]),
+                              fdvol=np.array([.333,.333,.334]),
+                              verbose=True):
+        """
+        defineBasins method will define basins given a BasinCnt and
+        input bathymetry distribution.
+
+        Parameter
+        ----------
+        BasinCnt : INT
+            The amount of basins the user chooses to define for the
+            given synthetic bathymetry model. The default is 3.
+        Distribution : NUMPY VECTOR
+            An n length vector corresponding to a global bathymetry
+            distribution, in %. The sum of the vector should be 100%.
+        binEdges : NUMPY VECTOR
+            AN n+1 numpy list of bin edges, in km, to where bathymetry
+            distributions were calculated over. Note that anything deeper
+            than the last bin edge should be defined within the last bin.
+        AOC : FLOAT
+            The total surface area of the seafloor of a bathymetry model [m2].
+        VOC : FLOAT
+            The total ocean volume of a bathymetry model [m3].
+        fanoc : NUMPY VECTOR
+            BasinCnt+1 length vector corresponding to the amount of
+            surface area covered by each basin [in decimal percent]
+            and a high latitude ocean box represented in Earth system
+            models (see the Earth system model named LOSCAR for
+            interpretation of this box). Note that the sum of the vector
+            should equal 1. The default value is np.array([.30,.30,.30, 10]).
+        fdvol : NUMPY VECTOR
+            BasinCnt length vector corresponding to the amount of
+            basin volume [in decimal percent] with respect to total ocaen
+            volume. Note that this value does not represent any ocean basin
+            volume within the high latitude box region. The default value
+            is np.array([.333,.333,.334,]).
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Define
+        ----------
+        self.bathymetryAreaDistBasin : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the exclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.bathymetryVolFraction : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            the precent basin volume, normalized to the volume of all ocean basins
+            (excluding the high latitude ocean volume).
+        self.bathymetryAreaFraction : DICTIONARY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            the precent basin area, normalized to the total seafloor area (including
+            the high latitude area).
+        self.bathymetryAreaDist_wHighlatG : NUMPY ARRAY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the inclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.bathymetryAreaDistG : NUMPY ARRAY
+            A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+            a histogram of seafloor bathymetry with using the following bin edges:
+            0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5, in km. Note
+            that this distribution is calculated with the exclusion of high latitude
+            distribution of seafloor depths. This is what is normally inputted into
+            the LOSCAR carbon cycle model.
+        self.binEdges : NUMPY LIST
+            A numpy list of bin edges, in km, to calculate the bathymetry distribution
+            over. Note that anything deeper than the last bin edge will be defined within
+            the last bin.
+        self.highlatlat : FLOAT
+            The latitude at which seafloor area at and above this latitude amounts to 
+            200*self.highlatA/self.AOC % of the total seafloor area. This value is set
+            to None since it does not have a strict definition in synthetic bathymetry
+            models.
+        self.VOC : FLOAT
+            The total ocean volume of a bathymetry model [m3].
+        self.AOC : FLOAT
+            The total surface area of the seafloor of a bathymetry model [m2].
+        self.highlatA : FLOAT
+            The area contained within the high latitude region. This is normally
+            a set value in a Earth (planetary) system model. In LOSCAR, this value
+            is set to 10%.
+
+        """
+
+        # Define the seafloor area and volume distribution between basins
+        # and the high latitude box. [Decimal percent]
+        self.bathymetryVolFraction = {};
+        self.bathymetryAreaFraction = {};
+        for basinIDi in range(BasinCnt):
+            self.bathymetryVolFraction['Basin{:0.0f}'.format(basinIDi)]     = fdvol[basinIDi];
+            self.bathymetryAreaFraction['Basin{:0.0f}'.format(basinIDi)]    = fanoc[basinIDi];
+
+        # Add bathymetry distribution information
+        self.binEdges                      = binEdges; # [0,...,6.5];
+
+        # Set synthetic bathymetry distributions
+        ## Global scale
+        self.bathymetryAreaDist_wHighlatG  = Distribution;
+        self.bathymetryAreaDistG           = Distribution;
+
+        # Basin scale
+        self.bathymetryAreaDistBasin = {};
+        for basinIDi in range(BasinCnt):
+            self.bathymetryAreaDistBasin['Basin{:0.0f}'.format(basinIDi)] = Distribution;
+
+        # Add attributes
+        self.highlatlat = None; # Is not defined for synthetic bathymetry models
+        self.VOC = VOC
+        self.AOC = AOC
+        self.highlatA = fanoc[-1]*self.AOC;
+
+        # Change boolean to indicate that basin bathymetry parameters have been defined.
+        self.BasinParametersDefined = True;
+
+        
+
+    def defineBasinConnectivityParameters(self,
+                                          BasinCnt = 3,
+                                          Distribution = None,
+                                          verbose=True):
+        """
+        defineBasinConnectivityParameters is a method used to define
+        basin connectivity bathymetry for synthetic bathymetry models.
+        Note that this method sets connective bathymetry equal to a 
+        common global bathymetry distribution.
+
+        Parameter
+        ----------
+        BasinCnt : INT
+            The amount of basins the user chooses to define for the
+            given synthetic bathymetry model. The default is 3.
+        Distribution : NUMPY VECTOR
+            An n length vector corresponding to a global bathymetry
+            distribution, in %. The sum of the vector should be 100%.
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Redefined
+        --------
+        self.bathymetryConDist : NUMPY ARRAY
+            A self.basinCnt x self.basinCnt x (binEdges-1) matrix that holds area
+            weighted bathymetry distributions of connectivity bathymetry between
+            basins. Distributions sum to 100%. 
+        """
+
+        # Setup array to hold connective bathymetry distributions.
+        self.bathymetryConDist = np.zeros( (self.basinCnt, self.basinCnt, len(binEdges)-1) ,dtype=float)
+
+        # Populate the array with bathymetry distributions
+
+        dsf
+
+        self.basinConnectionDefined = True;
+        pass
+
+    def saveCcycleParameter(self, verbose=True):
+        """
+        saveCcycleParameter method create a new netCDF4 containing 
+        the synthetic bathymetry parameters.
+
+        This method produces a netCDF4 that contains two groups
+        (CycleParms and Arrays). These groups might look like the
+        following for a global ocean system that has 3 basins:
+
+        group /basinConnections:
+            dimensions(sizes): binEdges(13), BasinID(3)
+            variables(dimensions):
+            basinConnectionBathymetry(BasinID, BasinID, binEdges)
+
+
+        group /CycleParms:
+            dimensions(sizes): binEdges(13), BasinID(3)
+            variables(dimensions):
+            float32 binEdges(binEdges),
+            float64 Global-whighlat(binEdges),
+            float64 Global(binEdges),
+            float64 basin-0(binEdges),
+            float64 basin-1(binEdges),
+            float64 basin-2(binEdges),
+            float32 BasinID(BasinID),
+            float64 fdvol(BasinID),
+            float64 fanoc(BasinID),
+            float64 highlatlat(),
+            float64 highlatA(),
+            float64 AOC()
+            float64 VOC(),
+            groups: 
+
+        group /Arrays:
+            dimensions(sizes): lat(180), lon(360)
+            variables(dimensions):
+            float32 lat(lat),
+            float32 lon(lon),
+            float64 bathymetry(lat, lon),
+            float64 basinIDArray(lat, lon),
+            float64 areaWeights(lat)
+            groups: 
+
+        Parameters
+        -----------
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Returns
+        --------
+        None.
+        """
+        # Set netCDF4 filename
+        BathyPath = "{0}/{1}".format(self.dataDir, self.filename);
+        
+        # Make new .nc file
+        ncfile = Dataset(BathyPath, mode='w', format='NETCDF4')
+
+        # Report what values will be stored in saved netCDF4
+        storedValuesStrV = ["---", "---"]
+        if self.BasinParametersDefined:
+            storedValuesStrV[0] = "";
+        else:
+            storedValuesStrV[0] = "not ";
+        if self.basinConnectionDefined:
+            storedValuesStrV[1] = "";
+        else:
+            storedValuesStrV[1] = "not ";
+        if verbose:
+            print("Basin bathymetry parameters are {}being stored in netCDF4 group CycleParms".format(storedValuesStrV[0]));
+            print("Basin connectivity bathymetry parameters are {}being stored in netCDF4 group basinConnections".format(storedValuesStrV[1]));
+
+        # Define groups
+        if self.BasinParametersDefined:
+            CycleParmsGroup = ncfile.createGroup("CycleParms")
+        if self.basinConnectionDefined:
+            BasinConnectionsGroup = ncfile.createGroup("basinConnections")
+
+        # Define dimension (latitude, longitude, and bathymetry distributions)
+        if self.BasinParametersDefined:
+            binEdges_dim = CycleParmsGroup.createDimension('binEdges', len(self.binEdges[1:]));              # distribution
+            basinID_dim = CycleParmsGroup.createDimension('BasinID', len(self.bathymetryAreaDistBasin));     # BasinID
+        if self.basinConnectionDefined:
+            binEdges_dim = BasinConnectionsGroup.createDimension('binEdges', len(self.binEdges[1:]));              # distribution
+            basinID_dim = BasinConnectionsGroup.createDimension('BasinID', len(self.bathymetryAreaDistBasin));     # BasinID
+
+        # Define variables for bathymetry distributions (vectors)
+        if self.BasinParametersDefined:
+            ## Global
+            binEdges = CycleParmsGroup.createVariable('binEdges', np.float32, ('binEdges',));
+            binEdges.units = 'km'; binEdges.long_name = 'km depth';
+
+            distribution_whighlat = CycleParmsGroup.createVariable('Global-whighlat', np.float64, ('binEdges',))
+            distribution_whighlat.units = 'kernal distribution'
+            distribution_whighlat.standard_name = 'Global-whighlat'
+
+            distribution = CycleParmsGroup.createVariable('Global', np.float64, ('binEdges',))
+            distribution.units = 'kernal distribution'
+            distribution.standard_name = 'Global'
+
+            ## Basins Scale Variables
+            ### Basin distribution
+            distributionBasins = {};
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)] = CycleParmsGroup.createVariable('basin-{:0.0f}'.format(basinIDi), np.float64, ('binEdges',));
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)].units = 'kernal distribution';
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)].standard_name = 'basin-{:0.0f}'.format(basinIDi);
+
+            ### BasinID
+            BasinID = CycleParmsGroup.createVariable('BasinID', np.float32, ('BasinID',));
+            BasinID.units = 'ID'; binEdges.long_name = 'BasinID';
+
+            ### Basin Volume fractions
+            fdvol = CycleParmsGroup.createVariable('fdvol', np.float64, ('BasinID',))
+            fdvol.units = '%'
+            fdvol.standard_name = 'fdvol'
+            fdvol.long_name = "fdvol the sum of which is equal to 100% (of VOC now within the high latitude area)"
+
+            ### Basin Area fractions (sum to 100% - highlatA/AOC)
+            fanoc = CycleParmsGroup.createVariable('fanoc', np.float64, ('BasinID',))
+            fanoc.units = '%'
+            fanoc.standard_name = 'fanoc'
+            fanoc.long_name = "fanoc the sum of which is equal to 100% - highlatA/AOC"
+
+            # Define single values parameters (e.g., VOC, AOC, high latitude cutoff)
+            highlatlat = CycleParmsGroup.createVariable('highlatlat', None)
+            highlatlat.units = 'degrees'
+            highlatlat.standard_name = 'highlatlat'
+
+            highlatA = CycleParmsGroup.createVariable('highlatA', None)
+            highlatA.units = 'meters sq'
+            highlatA.standard_name = 'highlatA'
+
+            VOC = CycleParmsGroup.createVariable('VOC', None)
+            VOC.units = 'meters cubed'
+            VOC.standard_name = 'VOC'
+
+            AOC = CycleParmsGroup.createVariable('AOC', None)
+            AOC.units = 'meters sq'
+            AOC.standard_name = 'AOC'
+
+        if self.basinConnectionDefined:
+            basinConnectionBathymetry = BasinConnectionsGroup.createVariable('basinConnectionBathymetry', np.float32, ('BasinID', 'BasinID', 'binEdges'));
+            basinConnectionBathymetry.units = 'km'; basinConnectionBathymetry.long_name = 'km depth';
+        
+        # Format title
+        ncfile.title='Bathymetry created from synthetic models. NetCDF4 includes carbon cycle bathymetry parameters'.format()
+        
+        # Populate the variables
+        if self.BasinParametersDefined:
+            # Add bathymetry distribution information
+            distribution_whighlat[:] = self.bathymetryAreaDist_wHighlatG;
+            distribution[:] = self.bathymetryAreaDistG;
+            binEdges[:] = self.binEdges[1:];
+
+            # Add basin distribution information
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                distributionBasins['Basin{:0.0f}'.format(basinIDi)][:] = self.bathymetryAreaDistBasin['Basin{:0.0f}'.format(basinIDi)]
+
+            # Add basin area and volume fractions
+            fdvolValues = np.zeros(len(self.bathymetryAreaDistBasin));
+            fanocValues = np.zeros(len(self.bathymetryAreaDistBasin));
+            for basinIDi in range(len(self.bathymetryAreaDistBasin)):
+                fdvolValues[basinIDi] = self.bathymetryVolFraction['Basin{:0.0f}'.format(basinIDi)];
+                fanocValues[basinIDi] = self.bathymetryAreaFraction['Basin{:0.0f}'.format(basinIDi)];
+            fdvol[:] = fdvolValues;
+            fanoc[:] = fanocValues;
+
+            # Add attributes
+            highlatlat[:] = self.highlatlat;
+            highlatA[:] = self.highlatA;
+            VOC[:] = self.VOC;
+            AOC[:] = self.AOC;
+        
+        if self.basinConnectionDefined:
+            basinConnectionBathymetry[:] = self.bathymetryConDist;
+            
+
+        # Close the netcdf
+        ncfile.close();
+
+        # Report contents of the created netCDF4
+        if verbose:
+            # Open netCDF4
+            ncfile = Dataset(BathyPath, mode='r', format='NETCDF4')
+
+            # Report netCDF4 contents
+            print("Group\tVariable\t\t\tDimensions\t\t\t\tShape")
+            print("--------------------------------------------------------------------------------------")
+            for groupi in ncfile.groups:
+                print(groupi);
+                for variable in ncfile[groupi].variables:
+                    if len(variable) != 20: 
+                        variablePrint = variable.ljust(25)
+                    print("\t"+variablePrint.ljust(25)+
+                        "\t"+str(ncfile[groupi][variable].dimensions).ljust(35)+
+                        "\t"+str(ncfile[groupi][variable].shape).ljust(35))
+            
+            # Close netCDF4
+            ncfile.close();
+
+
 
 def haversine_distance(lat1, lon1, lat2, lon2, radius):
     """
@@ -1910,9 +2766,9 @@ def haversine_distance(lat1, lon1, lat2, lon2, radius):
         Coordinate of first point latitude, in degree.
     lon1 : FLOAT
         Coordinate of first point longitude, in degree.
-    lat2 : FLOAT
+    lat2 : FLOAT or NUMPY VECTOR
         Coordinate of second point latitude, in degree.
-    lon2 : FLOAT
+    lon2 : FLOAT or NUMPY VECTOR
         Coordinate of second point longitude, in degree.
     radius : FLOAT
         Radius of the sphere.
@@ -2012,6 +2868,126 @@ def hexPolylineLength(coords1, coords2, resolution=1, verbose=True):
     return length
 
 
+
+#######################################################################
+######################### Basin merger packages #######################
+#######################################################################
+def mergerPackages(package = '', verbose=True):
+    '''
+    mergerPackages returns predefined basin merger methods for some
+    seafloor models/reconstructions. Users can create their own as 
+    well!
+
+    Parameter
+    ----------
+    package : STRING
+        The name of a basin merger package.
+
+
+    Return
+    -------
+    mergerPackage : DICTIONARY
+        A dictionary that describes the general merger strategy and strategy
+        for a given mergerID. It can be constructed as follows. The following
+        package first merges basins that represent 0.1% then 0.5% of total
+        basin surface area into the closest basin bigger than 0.1% and 0.5%.
+        Next, if mergerID=0 then mergers0 will merger basin 0 with 0,8,9,10,
+        basin 1 with ..., and basin 2 with ...
+        
+            mergerPackage = {'mergeSmallBasins': {'on':True,
+                                                'threshold':np.array([.1,.5]),
+                                                'thresholdMethod':'%',
+                                                'mergeMethod':'nearBasinEdge'},
+                            'mergerID': np.array([0, 5, 10, 15, 20, 25]),
+                            'mergers0':  {'0':[0,8,9,10], '1':[...], '2':[...] },
+                            'mergers5':  {'0':[...], '1':[...], '2':[...] },
+                            'mergers...':{'0':[...], '1':[...], '2':[...] }
+                            }
+    
+    '''
+    # Define a merger package that does not merge and basins
+    mergerPackage = {'mergeSmallBasins': {'on':False,
+                                                'threshold':np.array([.1]),
+                                                'thresholdMethod':'%',
+                                                'mergeMethod':'nearBasinEdge'},
+                            'mergerID': np.array([0, 5, 10, 15, 20, 25]),
+                            'mergers0':  {'0':[0], '1':[1], '2':[2] },
+                            }
+
+    # Define merger package
+    if package == 'EarthRecon3Basins_CM2009':
+        # Package merges to have basins larger than 0.5% total surface of oceans.
+        # Then basins are merged into
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1,.5]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'mergerID': np.array([0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80]),
+                        'mergers0':   {'0':[0,1],            '1':[1,2,4,5],     '2':[2,3,4,5,6]},
+                        'mergers5':   {'0':[0,1,2,6],        '1':[1,4,5,6],     '2':[2,3]},
+                        'mergers10':  {'0':[0,6,7,9,10],     '1':[1,4],         '2':[2,3,4,5]},
+                        'mergers15':  {'0':[0,1],            '1':[1,2,4,6],     '2':[2,3,4,5,6]},
+                        'mergers20':  {'0':[0,1,6],          '1':[1,3,4,5],     '2':[2,3,4,5]},
+                        'mergers25':  {'0':[0,3,4,9],        '1':[1,2,4],       '2':[2,3,4,5]},
+                        'mergers30':  {'0':[0,4,5,6,7],      '1':[1,2,4,5],     '2':[2]},
+                        'mergers35':  {'0':[0,2,5,7,8],      '1':[1,4,5],       '2':[2,3]},
+                        'mergers40':  {'0':[0,3],            '1':[1,3,4,5,6],   '2':[2,3,4,5]},
+                        'mergers45':  {'0':[0,3,9],          '1':[1,3,4,6,7],   '2':[2,3,4]},
+                        'mergers50':  {'0':[0,4,6,7,9],      '1':[1,2,4],       '2':[2,3,4]},
+                        'mergers55':  {'0':[0,2,5],          '1':[1,3,4,5,6,8], '2':[2,3,4]},
+                        'mergers60':  {'0':[0,2,4,6,8],      '1':[1,3,4],       '2':[2,3,4]},
+                        'mergers65':  {'0':[0,2,4,5,6,9,10], '1':[1,3,5],       '2':[2,3]},
+                        'mergers70':  {'0':[0,2],            '1':[1,6,8],       '2':[2,3,4,5,6]},
+                        'mergers75':  {'0':[0,8,10],         '1':[1,2,3],       '2':[2,3,4,5,6]},
+                        'mergers80':  {'0':[0,3],            '1':[1,2,5,6,7],   '2':[2,3,4,5]},
+                        'arrange0':  [2,0,1],
+                        'arrange5':  [1,2,0],
+                        'arrange15': [2,0,1],
+                        'arrange20': [2,0,1],
+                        'arrange25': [2,1,0],
+                        'arrange30': [1,2,0],
+                        'arrange35': [1,2,0],
+                        'arrange40': [2,0,1],
+                        'arrange45': [2,0,1],
+                        'arrange50': [2,1,0],
+                        'arrange55': [2,0,1],
+                        'arrange60': [2,1,0],
+                        'arrange65': [1,2,0],
+                        'arrange70': [1,0,2],
+                        'arrange80': [2,0,1],
+                        'verbose':True};
+        pass
+
+    if package == 'Lite':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1,.5]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+
+    elif package == 'EarthRecon3BasinsRK2021_H_2,10e-12':
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1,.5]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'mergerID': np.array([0, 5, 10, 15, 20, 25]),
+                        'mergers0':  {'0':[0,2,6], '1':[1,2,3,5,8], '2':[2,3,4,5]},
+                        'arrange0': [2,0,1],
+                        'verbose':True};
+        pass
+        
+    elif package == 'EarthRecon3BasinsRK2021_H_8,00e-12':
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1,.5]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'mergerID': np.array([0, 5, 10, 15, 20, 25]),
+                        'mergers0':  {'0':[0,8,9,10], '1':[1,2,6], '2':[2,3,4,5] },
+                        'verbose':True};
+
+    return mergerPackage
 
 
 

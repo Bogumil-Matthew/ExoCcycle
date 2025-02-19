@@ -34,9 +34,12 @@ class BathyMeasured():
     getTopo is a method to download different topography models.
         getTopo(self, body = {'Mars':'True', 'Venus':'False', 'Moon':'False', 'Earth':'False'}):
 
+        i. planets: https://pds-geosciences.wustl.edu/missions/magellan/shadr_topo_grav/index.htm
+
         1. Moon:    https://pgda.gsfc.nasa.gov/products/54 or https://pgda.gsfc.nasa.gov/products/95 (include above 60 degrees)
         2. Mars:    !wget https://github.com/andrebelem/PlanetaryMaps/raw/v1.0/mola32.nc
-        3. Venus:   https://astrogeology.usgs.gov/search/map/venus_magellan_global_c3_mdir_colorized_topographic_mosaic_6600m
+        3. Venus2:  https://astrogeology.usgs.gov/search/map/venus_magellan_global_c3_mdir_colorized_topographic_mosaic_6600m
+        3. Venus:   https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img ()
         4. Earth:   etopo
     
     readTopo is a method to read in a downloaded topography models. They are interpolated and
@@ -140,7 +143,7 @@ class BathyMeasured():
             if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model)):
                 os.system("gdal_translate -of NetCDF {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model));
             if verbose:
-                os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+                os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K -Vq> {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Venus":
             if os.path.exists("{0}/topographies/{1}/topogrd.img"):
                 os.system("wget -O {0}/topographies/{1}/topogrd.img https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img".format(data_dir, self.model));
@@ -180,28 +183,28 @@ class BathyMeasured():
                 ## Close the netcdf
                 ncfile.close(); 
             if verbose:
-                os.system("gmt grdimage {0}/topographies/{1}/topogrd.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+                os.system("gmt grdimage {0}/topographies/{1}/topogrd.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Earth":
             if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz"):
                 os.system("wget -O {0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO1/data/ice_surface/cell_registered/netcdf/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir))
             if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd"):
                 os.system("yes N | gzip -k -d {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir, self.model));
             if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.nc"):
-                os.system("gmt grdconvert {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -fg".format(data_dir, self.model))
+                os.system("gmt grdconvert {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -fg -Vq".format(data_dir, self.model))
             if verbose:
-                os.system("gmt grdimage {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+                os.system("gmt grdimage {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Mars":
             if os.path.exists("{0}/topographies/{1}/mola32.nc"):
                 os.system("wget -O {0}/topographies/{1}/mola32.nc https://github.com/andrebelem/PlanetaryMaps/raw/v1.0/mola32.nc".format(data_dir, self.model))
             if verbose:
-                os.system("gmt grdimage {0}/topographies/{1}/mola32.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+                os.system("gmt grdimage {0}/topographies/{1}/mola32.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Moon":
             if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.grd"):
                 os.system("wget -O {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd https://pgda.gsfc.nasa.gov/data/LOLA_PA/LDEM64_PA_pixel_202405.grd".format(data_dir, self.model));
             if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.nc"):
-                os.system("gmt grdconvert {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -fg".format(data_dir, self.model));
+                os.system("gmt grdconvert {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -fg -Vq".format(data_dir, self.model));
             if verbose:
-                os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
+                os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
 
     def readTopo(self, data_dir, new_resolution = 1, verbose=True):
         """
@@ -294,7 +297,7 @@ class BathyMeasured():
                 # Close dataset
                 self.nc.close();
                 # Resample and reread dataset 
-                os.system("gmt grdsample {0} -Rd -I1d -rp -G{1}".format(TopoPath, TopoPath.replace(".nc", "_resampled.nc")))
+                os.system("gmt grdsample {0} -Rd -I1d -rp -G{1} -Vq".format(TopoPath, TopoPath.replace(".nc", "_resampled.nc")))
                 TopoPath = TopoPath.replace(".nc", "_resampled.nc");
                 self.nc = Dataset(TopoPath);
                 # Need to redefine the lat/lon/elevation naming scheme
@@ -896,10 +899,12 @@ class BathyRecon():
         else:
             print("Multiple netCDF4 files were read from the given etopo directory: {0}.\n{1} will be read and used as the present-day topography throughout this analysis".format(self.etopofid, self.etopofid[0]))
             self.etopofid = self.etopofid[0];
-        print('test')
         
         # Set the radius of planet
         self.radiuskm = 6371.0;
+
+        # Set the default thermal subsidence method
+        self.thermalSubMethod = {'type':"CM2009"};
     
         # Ocean basin volume is defined based on analysis from Bogumil et al. (2024) https://doi.org/10.1073/pnas.2400232121.
         constVOC = True;
@@ -924,9 +929,61 @@ class BathyRecon():
                     per_ice_melt = 0;           # [%] - Present day glaciers
                 self.VOCValues[i] = (100/(100-per_ice_melt))*cp.deepcopy(self.VOCValuesPD);
 
+    def setThermalMethod(self, thermalSubMethod={'type':"CM2009"}, verbose=True):
+        """
+        setThermalMethod method is used to set the thermal subsidence method
+        for ocean lithosphere age-depth calculation.
 
-    
-    def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1, verbose=True):
+        Parameters
+        -----------
+        method : DICTIONARY, optional
+            A dictionary that describe the thermal subsidence relationship
+            to use in reconstructions. For this method users must define
+            the method input in the following way:
+                method = {'type':'RS2021', 'H':[...], 'MORDepthkm':[...]}
+                H can be    2.1e-12 (present-day)
+                            3.2e-12 (1.7 Ga)
+                            4.8e-12 (2.8 Ga)
+                            6.4e-12 (3.5 Ga)
+                            8e-12   (3.95 Ga)
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+            
+        (Re)defines
+        ------------
+        self.thermalSubMethod : DICTIONARY
+            Contains entry named 'type' that determines the method used for
+            seafloor age-depth relationships. 'type' can either be RK2021
+            or CM2009 that refer to the above described models. Note that
+            the RK2021 option will require users to define an additional
+            value for the age-depth relationship (i.e., internal heating).
+        """
+        
+        # Set method to use for thermal subsidence of ocean lithosphere
+        self.thermalSubMethod['type'] = thermalSubMethod['type'];
+
+        if self.thermalSubMethod['type'] == "RK2021":
+            # Set interval heating value if RK2021 meethod is used.
+            self.thermalSubMethod['H'] = thermalSubMethod['H'];
+
+            # Set mid-ocean-ridge depth
+            self.thermalSubMethod['MORDepthkm'] = thermalSubMethod['MORDepthkm'];
+
+            # Report
+            if verbose:
+                HAvailable = np.array([2.1e-12, 3.2e-12, 4.8e-12, 6.4e-12, 8e-12]);
+                ## Find the closest H value from the RK2021 paper
+                ## Find the index of that internal heating value
+                i = np.argwhere(np.min(np.abs(HAvailable-self.thermalSubMethod['H'])) == np.abs(HAvailable-self.thermalSubMethod['H']))[0][0]
+
+                if 10 < 100*np.abs(HAvailable[i]-self.thermalSubMethod['H'])/self.thermalSubMethod['H']:
+                    print("\nUser defined internal heating {:1.1e} [W/m/K] is {:0.0f}% (large/small) than the closest internal heating value used in RK2021 ({:1.1e} [W/m/K]). H = {:1.1e} [W/m/K] will be used.".format(thermalSubMethod['H'],
+                                                                                                                                                                                                                       -100*(HAvailable[i]-self.thermalSubMethod['H'])/self.thermalSubMethod['H'],
+                                                                                                                                                                                                                       HAvailable[i],
+                                                                                                                                                                                                                       HAvailable[i]))
+                    print("\nInternal heating values of H [W/m/K] = 2.1e-12 (present-day) 3.2e-12 (1.7 Ga), 4.8e-12 (2.8 Ga), 6.4e-12 (3.5 Ga), and 8e-12 (3.95 Ga) available for analysis.")
+
+    def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1, maxBasinCnt = 1e5, findBasins=True, verbose=True):
         '''
         run will make a netCDF4 file which contains
         bathymetry modeled with thermal subsidence,
@@ -947,16 +1004,23 @@ class BathyRecon():
         resolution : Float
             Spatial resolution of bathymetry model, in
             degrees.
+        maxBasinCnt : INT
+            Maximum number of basins to allow in a bathymetry
+            model. The default is 1e5.  
+        findBasins : BOOLEAN
+            An option to define whether full bathymetry calculations
+            should be conducted or if the user is defining properties
+            to merge basins. The default is True.
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
 
         (Re)defines
         ------------
+        FIXME:
 
         
         '''
-        print('working progress')
 
         # Define all periods to bathymetry for.
         reconAgeVec = list(np.arange(endMa, startMa+deltaMyr, deltaMyr));
@@ -973,7 +1037,7 @@ class BathyRecon():
 
             # 1c. Use age grid to calculate seafloor depth from age-depth relationship
             # Note that bathymetry is represented with positive values.
-            self.topography = self.addThermalSub(self.topography, self.oceanLithAge['z'][:].data, self.lat, verbose=False);
+            self.topography = self.addThermalSub(self.topography, self.oceanLithAge['z'][:].data, self.lat, method=self.thermalSubMethod, verbose=False);
             
             # 2. Isostatically compensation (sed thickness, litho age) that also include
             # sediment thickness.
@@ -995,7 +1059,8 @@ class BathyRecon():
             # by paleoDEMs is not changed). The sealevel is also applied at
             # 65% of its value which is consistent with continental flooding
             # (see https://www.earthbyte.org/webdav/ftp/Data_Collections/Scotese_Wright_2018_PaleoDEM/Scotese_Wright2018_PALEOMAP_PaleoDEMs.pdf) 
-            self.topography, ESLi = self.getESL(self.topography, self.oceanLithAge['z'][:].data, reconAge, factor=.65, verbose=False);
+            if self.thermalSubMethod['type'] == "CM2009":
+                self.topography, ESLi = self.getESL(self.topography, self.oceanLithAge['z'][:].data, reconAge, factor=.65, verbose=False);
 
             # 5. Close the ocean lithospheric age grids netCDF4
             self.oceanLithAge.close()
@@ -1023,264 +1088,360 @@ class BathyRecon():
             ## are define here.
             self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
 
-            # 9. Save bathymetry model w/o the ocean volume corrections
-            # FIXME: Need to define this at a higher level.
-            self.data_dir = os.getcwd();
-            self.resolution = resolution;
-            self.model = "EarthRecon3Basins"
-            #self.model = "EarthRecon3_4Basins"
 
-            self.saveBathymetry(reconAge, verbose=True);
+            if self.thermalSubMethod['type'] == "RK2021":
+                # 9. Save bathymetry model w/o the ocean volume corrections
+                self.data_dir = os.getcwd();
+                self.resolution = resolution;
+                self.model = "EarthRecon3BasinsRK2021_"+("H_{:2.2e}".format( self.thermalSubMethod['H'] )).replace(".",',');
 
-            # 10. Find basins (Note that this is a partially manual process)
-            ## Define basins class for finding basins
-            def mergeBasins(basins, reconAge):
-                if reconAge == 0:
-                    # Merge basins north of Atlantic
-                    basins.mergeBasins(0,[1,2,3,4,6,8,12,25,29,30,31,35,40,43,44,45,46,47,51,54,57,62,63,64,65,66,68,69,70], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,18,22,23,24,25,26], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
-                elif reconAge == 5:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[1,2,3,4,5,6,7,23,27,29,30,36,38,40,42,43,44,45,46,47,52,55,56,58,60,62,63,64,65,67], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,20,21,22,23,25], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
-                    pass
-                elif reconAge == 10:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[1,2,3,4,5,6,7,14,30,33,35,36,37,38,43,47,49,50,52,53,54,55,56,57,58,59,60,64,65,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[2,3,4,5,6,8,10,11,12,13,14,15,16,17,18,19,20,23,24,27,28], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
-                    pass
-                elif reconAge == 15:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[1,17,25,26,28,31,39,45,47,49,50,52,53,56,61,62,63,64,65,66,67,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85,86,88,89,90,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,16,17,18,19,20,24,25,26,27,28,29,30,31,32,33,34,38,39,40,41,43,44,45], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
-                    pass
-                elif reconAge == 20:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 25:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 30:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 35:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 40:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 45:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 50:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 55:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 60:
-                    # Merge basins north of Atlantic
-                    basins.mergeBasins(0,[0,1,2,3,4,5,6,7,8,9,15,16,19,20,21,37,44,46,49,51,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68,69,70,71,72,76,77,79,81,82,84,87,88,89,90,91,92], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,11,12,13,14,17,18,19,21,24,25,27,28,30,32,33], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19], write=False)
-                    pass
-                elif reconAge == 65:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 70:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 75:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                elif reconAge == 80:
-                    # Merge basins north of Atlantic
-                    #basins.mergeBasins(0,[], write=False)
-                    # Merge basins north of Atlantic with Atlantic.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(1,[], write=False)
-                    # Merge basins for Pacific ocean.
-                    # Note the new basinIDs
-                    #basins.mergeBasins(2,[], write=False)
-                    pass
-                print("working progress")
+                ## Create directory for storing bathymetry models
+                utils.create_file_structure(list_of_directories=['/bathymetries/'+self.model])
 
-                # Report
-                blues_cm = mpl.colormaps['Blues'].resampled(100)
-                basins.visualizeCommunities( cmapOpts={"cmap":blues_cm,
-                                                    "cbar-title":"cbar-title",
-                                                    "cbar-range":[np.nanmin(np.nanmin(basins.bathymetry)),
-                                                                    np.nanmean(basins.bathymetry)+2*np.nanstd(basins.bathymetry)]},
-                                            pltOpts={"valueType": "Bathymetry",
-                                                    "valueUnits": "m",
-                                                    "plotTitle":"{}".format(basins.body),
-                                                    "plotZeroContour":True,
-                                                    "nodesize":1,
-                                                    "connectorlinewidth":1,
-                                                    "projection":"Miller"},
-                                            draw={"nodes":False,
-                                                "connectors":False,
-                                                "bathymetry":False,
-                                                "coastlines":True,
-                                                "gridlines":False,
-                                                "nodes-contour":True},
-                                            saveSVG=False,
-                                            savePNG=True)
+                self.saveBathymetry(reconAge, verbose=True);
+
+                # 10. Find basins (Note that this is a partially manual process)
+                ## Define basins class for finding basins
+                basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                    filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
+                                    body=self.model);
+
+                # Define basins based on user input boundaries
+                # If the file exist then read file, otherwise write
+                if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=True,
+                                        write=False,
+                                        verbose=False)
+                else:
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=False,
+                                        write=True,
+                                        verbose=False)
                 
-                # Return
-                return basins
-
-            basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
-                                  filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
-                                  body=self.model);
-
-            # Define basins based on user input boundaries
-            # If the file exist then read file, otherwise write
-            if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
-                basins.defineBasins(minBasinCnt = 3,
-                                    method = "Louvain",
-                                    reducedRes={"on":True,"factor":1},
-                                    read=True,
-                                    write=False,
-                                    verbose=False)
-            else:
-                basins.defineBasins(minBasinCnt = 3,
-                                    method = "Louvain",
-                                    reducedRes={"on":True,"factor":1},
-                                    read=False,
-                                    write=True,
-                                    verbose=False)
-            
-            if self.model == "EarthRecon3Basins":
-                basins = mergeBasins(basins, reconAge)
-
-            # Assign basins as a BathyRecon class attribute.
-            self.basins = basins;
-
-            # 11. Apply ocean volume correction based on is representation of present-day
-            # bathymetry.
-            # 11a. Set the ocean volume expected at the reconstruction period.
-            self.VOCTarget = self.getVOCi(reconAge);
-
-            # 11b. Apply the ocean volume correction based on the misfit of present-day
-            # distributions and the expected paleo ocean volume.            
-            if reconAge == 0:
-                self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
-            else:
+                '''
                 try:
-                    # If self.etopoKernelDis was defined (i.e., the present-day analysis was previously done) then
-                    # the volume correction will be applied to the topography model.
-                    
-
-                    # Apply the ocean volume correction
-                    self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
+                    basins.applyMergeBasinMethods(reconAge,
+                                                  utils.mergerPackages(self.model),
+                                                  maxBasinCnt=maxBasinCnt);
                 except:
-                    # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
                     pass
+                '''
+                basins.applyMergeBasinMethods(reconAge,
+                                                utils.mergerPackages(self.model),
+                                                maxBasinCnt=maxBasinCnt);
+
+                
+                # Assign basins as a BathyRecon class attribute.
+                self.basins = basins;
             
-            # 11c. Assign the VOC corrected bathymetry to the basins object
-            self.basins.bathymetry = self.bathymetry;
+                sds
+            
+
+            elif self.thermalSubMethod['type'] == "CM2009":
+                # 9. Save bathymetry model w/o the ocean volume corrections
+                # FIXME: Need to define this at a higher level.
+                self.data_dir = os.getcwd();
+                self.resolution = resolution;
+                self.model = "EarthRecon3Basins"
+                #self.model = "EarthRecon3_4Basins"
+
+                ## Create directory for storing bathymetry models
+                utils.create_file_structure(list_of_directories=['/bathymetries/'+self.model])
+
+                self.saveBathymetry(reconAge, verbose=True);
+
+
+                # 10. Find basins (Note that this is a partially manual process)
+                ## Define basins class for finding basins
+                basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                    filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
+                                    body=self.model);
+
+                # Define basins based on user input boundaries
+                # If the file exist then read file, otherwise write
+                if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=True,
+                                        write=False,
+                                        verbose=False)
+                else:
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=False,
+                                        write=True,
+                                        verbose=False)
+                
+                try:
+                    basins.applyMergeBasinMethods(reconAge,
+                                                  utils.mergerPackages("{}_{}".format(self.model, self.thermalSubMethod['type'])),
+                                                  maxBasinCnt=maxBasinCnt);
+                except:
+                    pass
+                
+                # Assign basins as a BathyRecon class attribute.
+                self.basins = basins;
+                if findBasins==True:
+                    continue;
+                '''
+
+                # 10. Find basins (Note that this is a partially manual process)
+                ## Define basins class for finding basins
+                def mergeBasins(basins, reconAge):
+                    if reconAge == 0:
+                        # Merge basins north of Atlantic
+                        basins.mergeBasins(0,[1,2,3,4,6,8,12,25,29,30,31,35,40,43,44,45,46,47,51,54,57,62,63,64,65,66,68,69,70], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,18,22,23,24,25,26], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
+                    elif reconAge == 5:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[1,2,3,4,5,6,7,23,27,29,30,36,38,40,42,43,44,45,46,47,52,55,56,58,60,62,63,64,65,67], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,17,18,20,21,22,23,25], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
+                        pass
+                    elif reconAge == 10:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[1,2,3,4,5,6,7,14,30,33,35,36,37,38,43,47,49,50,52,53,54,55,56,57,58,59,60,64,65,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[2,3,4,5,6,8,10,11,12,13,14,15,16,17,18,19,20,23,24,27,28], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21], write=False)
+                        pass
+                    elif reconAge == 15:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[1,17,25,26,28,31,39,45,47,49,50,52,53,56,61,62,63,64,65,66,67,68,69,70,73,74,75,76,77,78,79,80,82,83,84,85,86,88,89,90,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,10,11,12,13,16,17,18,19,20,24,25,26,27,28,29,30,31,32,33,34,38,39,40,41,43,44,45], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16], write=False)
+                        pass
+                    elif reconAge == 20:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 25:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 30:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 35:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 40:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 45:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 50:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 55:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 60:
+                        # Merge basins north of Atlantic
+                        basins.mergeBasins(0,[0,1,2,3,4,5,6,7,8,9,15,16,19,20,21,37,44,46,49,51,53,54,55,56,57,58,59,60,61,62,63,64,65,66,68,69,70,71,72,76,77,79,81,82,84,87,88,89,90,91,92], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        basins.mergeBasins(1,[1,2,3,4,5,6,7,8,9,11,12,13,14,17,18,19,21,24,25,27,28,30,32,33], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        basins.mergeBasins(2,[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19], write=False)
+                        pass
+                    elif reconAge == 65:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 70:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 75:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    elif reconAge == 80:
+                        # Merge basins north of Atlantic
+                        #basins.mergeBasins(0,[], write=False)
+                        # Merge basins north of Atlantic with Atlantic.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(1,[], write=False)
+                        # Merge basins for Pacific ocean.
+                        # Note the new basinIDs
+                        #basins.mergeBasins(2,[], write=False)
+                        pass
+                    print("working progress")
+
+                    # Report
+                    blues_cm = mpl.colormaps['Blues'].resampled(100)
+                    basins.visualizeCommunities( cmapOpts={"cmap":blues_cm,
+                                                        "cbar-title":"cbar-title",
+                                                        "cbar-range":[np.nanmin(np.nanmin(basins.bathymetry)),
+                                                                        np.nanmean(basins.bathymetry)+2*np.nanstd(basins.bathymetry)]},
+                                                pltOpts={"valueType": "Bathymetry",
+                                                        "valueUnits": "m",
+                                                        "plotTitle":"{}".format(basins.body),
+                                                        "plotZeroContour":True,
+                                                        "nodesize":1,
+                                                        "connectorlinewidth":1,
+                                                        "projection":"Miller"},
+                                                draw={"nodes":False,
+                                                    "connectors":False,
+                                                    "bathymetry":False,
+                                                    "coastlines":True,
+                                                    "gridlines":False,
+                                                    "nodes-contour":True},
+                                                saveSVG=False,
+                                                savePNG=True)
+                    
+                    # Return
+                    return basins
+
+                basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                    filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
+                                    body=self.model);
+
+                # Define basins based on user input boundaries
+                # If the file exist then read file, otherwise write
+                if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=True,
+                                        write=False,
+                                        verbose=False)
+                else:
+                    basins.defineBasins(minBasinCnt = 3,
+                                        method = "Louvain",
+                                        reducedRes={"on":True,"factor":1},
+                                        read=False,
+                                        write=True,
+                                        verbose=False)
+                
+                if self.model == "EarthRecon3Basins":
+                    basins = mergeBasins(basins, reconAge)
+
+                # Assign basins as a BathyRecon class attribute.
+                self.basins = basins;
+                '''
+
+                # 11. Apply ocean volume correction based on is representation of present-day
+                # bathymetry.
+                # 11a. Set the ocean volume expected at the reconstruction period.
+                self.VOCTarget = self.getVOCi(reconAge);
+
+                # 11b. Apply the ocean volume correction based on the misfit of present-day
+                # distributions and the expected paleo ocean volume.            
+                if reconAge == 0:
+                    self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
+                else:
+                    try:
+                        # If self.etopoKernelDis was defined (i.e., the present-day analysis was previously done) then
+                        # the volume correction will be applied to the topography model.
+                        
+
+                        # Apply the ocean volume correction
+                        self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
+                    except:
+                        # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
+                        pass
+                
+                # 11c. Assign the VOC corrected bathymetry to the basins object
+                self.basins.bathymetry = self.bathymetry;
             
 
             # 12. Save bathymetry model (w/ the ocean volume corrections) in standardized ExoCcycle outputs.
@@ -1302,12 +1463,8 @@ class BathyRecon():
             # 12c. Expand original bathymetry netCDF4 file by writting a new basin bathymetry
             # netCDF4 file that also contains basin bathymetry parameters.
             self.basins.saveCcycleParameter(verbose=True);
-            
-
-
 
             # Report
-            
             if verbose:
                 blues_cm = mpl.colormaps['Blues'].resampled(100)
                 self.highlatlat = 90
@@ -1328,7 +1485,6 @@ class BathyRecon():
                                      saveSVG=False,
                                      savePNG=False)
             
-
     def getVOCi(self, age):
         """
         getVOCi returns the expected ocean basin volume at some period
@@ -1541,7 +1697,7 @@ class BathyRecon():
         # Use gmt to copy the paleoDEM, resampling into the user
         # defined resolution. Note that this code also converts
         # the paleoDEM from grid line to cell registered.
-        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(paleoDEMfidi,
+        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T -Vq".format(paleoDEMfidi,
                                                                 os.getcwd()+'/tempPaleoDEMi.nc',
                                                                 resolution))
         
@@ -1587,7 +1743,7 @@ class BathyRecon():
         # Use gmt to copy the paleoDEM, resampling into the user
         # defined resolution. Note that this code also converts
         # the paleoDEM from grid line to cell registered.
-        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T".format(oceanLithAgefidi,
+        os.system("gmt grdsample {0} -G{1} -I{2} -Rd -T -Vq".format(oceanLithAgefidi,
                                                                 os.getcwd()+'/tempOecanLithAgei.nc',
                                                                 resolution))
         
@@ -1597,15 +1753,53 @@ class BathyRecon():
         # Delete paleoDEM
         os.system("rm {}".format(os.getcwd()+'/tempOecanLithAgei.nc'))
 
-    def addThermalSub(self, topography, seafloorAge, latitude, verbose=True):
+    def addThermalSub(self, topography, seafloorAge, latitude, method={'type':'CM2009'}, verbose=True):
         '''
         addThermalSub is a method that calculates and adds first order
         seafloor depth from thermal subsidence of oceanic lithosphere
         to a topography model.
 
-        Thermal subsidence is calculated according to Crosby and McKenzie's
-        (2009) relationship (eq. 4) between present-day seafloor depths and
-        ages. https://doi.org/10.1111/j.1365-246X.2009.04224.x 
+        Thermal subsidence is calculated according to one of the following
+        methods:
+            1. Crosby and McKenzie's (2009) relationship (eq. 4) between
+               present-day seafloor depths and ages.
+               https://doi.org/10.1111/j.1365-246X.2009.04224.x 
+            2. Rosas and Korenaga (2021) relationship (eq. 16) between
+               seafloor depth and ages given varying internal mantle
+               heating. Note that this model might be useful for
+               exploring early Earth-like conditions.
+               https://doi.org/10.1038/s41561-020-00673-1.
+               For this method users must define the method input in
+               the following way:
+                    method = {'type':'RS2021', 'H':[...], 'MORDepthkm':[...]}
+                    H can be    2.1e-12 (present-day)
+                                3.2e-12 (1.7 Ga)
+                                4.8e-12 (2.8 Ga)
+                                6.4e-12 (3.5 Ga)
+                                8e-12   (3.95 Ga)
+
+
+               Parameters used for this analysis are as follows:
+
+               General parameters:
+                Value:  Description                                                         Value    Unit in formula
+                a1:     Slope for linear relation between H* in the conductive phase        0.001    [1/Myr^(1/2)]
+                a2:     Slope for linear relation between H* in the convection phase        0.0228   [-]
+                b2:     Intercept for linear relation between H* in the conductive phase    0.0452   [-]
+                tmax:   Maximum age of seafloor                                             500 Myr  [Myr]
+                ti:     Intersection with horizontal axis (ext fig 2a)                      2.5 Myr  [Myr]
+                rhoW:   Density of water                                                    1000     [kg/m3]
+                rhoM:   Surface mantle density                                              3300     [kg/m3]
+                rho0:   Reference density                                                   4000     [kg/m3]
+                d:      Thickness of manle                                                  2900e3   [m]
+                kappa:  Thermal conductivity                                                4        [W/m/K]
+                alpha:  Thermal expansivity                                                 1e-6     [1/K]
+                deltaT: Mantle potential temperature                                        1350     [K]
+                nu0:    Reference viscosity                                                 1.3e20   [Pa s]
+
+               Varying Parameter:
+                Hstar:  H* (Non-dimensionalized heating parameter)                          [varies] Taken from figure 2a (Rosas and Korenaga 2021)     [-]
+                tstar:  Onset time of asthenospheric convection                             [varies] Digitized from figure 2a (Rosas and Korenaga 2021) [s]
 
 
         Parameters
@@ -1620,7 +1814,13 @@ class BathyRecon():
             subsiding seafloor- should be represented with np.nan values. 
         latitude : NUMPY ARRAY
             nx2n global array of latitudes corresponding to element locations
-            in input topography and seafloorAge arrays.  
+            in input topography and seafloorAge arrays.
+        method : DICTIONARY
+            Contains entry named 'type' that determines the method used for
+            seafloor age-depth relationships. 'type' can either be RK2021
+            or CM2009 that refer to the above described models. Note that
+            the RK2021 option will require users to define an additional
+            value for the age-depth relationship (i.e., internal heating).
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
@@ -1630,22 +1830,168 @@ class BathyRecon():
             nx2n global array of topography, in m, that now includes
             thermal subsidence of seafloor subsidence.
         '''
+        
+        if method['type'] == "RK2021":
+            # Rosas and Korenaga (2021) age-depth relationship for different internal
+            # heating scenarios.
+            parameters = {}
+            parameters['set1'] = {};
+
+            # Conversion
+            Myr2s = (1e6)*365*24*60*60; # [s/Myr]
+
+            # All parameters are taken from Rosas and Korenaga (2021)
+            parameters['set1']['a1'] = 0.001;           # Slope for linear relation between H* in the conductive phase [1/s^(1/2)]
+            parameters['set1']['a2'] = 0.0228;          # Slope for linear relation between H* in the convection phase [-]
+            parameters['set1']['b2'] = 0.0452;          # Intercept for linear relation between H* in the conductive phase [-]
+            parameters['set1']['tmax'] = 500*Myr2s;     # Maximum age of seafloor [s]
+            parameters['set1']['ti'] = (2.5**2)*Myr2s;  # Intersection with horizontal axis (ext fig 2a) [s]
+            parameters['set1']['rhoW'] = 1000;          # Surface mantle density [kg/m3]
+            parameters['set1']['rhoM'] = 3300;          # Density of water [kg/m3]
+
+            parameters['set1']['rho0'] = 4000;          # Reference density [kg/m3]
+            parameters['set1']['d'] = 2900e3;           # Thickness of manle [m]
+            parameters['set1']['K'] = 4;                # Thermal conductivity [W/m/K]
+            parameters['set1']['kappa'] = 1e-6;         # Thermal diffusivity [m2/s]
+            parameters['set1']['alpha'] = 3e-5;         # Thermal expansivity [1/K]
+            parameters['set1']['deltaT'] = 1350;        # Mantle potential temperature [K]
+
+            parameters['set1']['nu0'] = 1.3e20;         # Asthenospheric viscosity [Pa s]
+            parameters['set1']['H'] = np.array([2.1, 3.2, 4.8, 6.4, 8])*1e-12; # Internal heating [W/m/K]
+            parameters['set1']['Hstar'] = (parameters['set1']['rho0']*parameters['set1']['d']**2/(parameters['set1']['K']*parameters['set1']['deltaT'])) * parameters['set1']['H'];
+
+            # Digitized from figure 2a (Rosas and Korenaga 2021)
+            parameters['set1']['tstar'] = (np.array([16.966824644549764,
+                                                    16.303317535545023,
+                                                    15.734597156398102,
+                                                    15.165876777251183,
+                                                    14.786729857819903])**2)*Myr2s; # Onset time pf sublithospheric of convection[s]
+
+
+            # Functions for seafloor subsidence from Rosas and Korenaga (2021)
+            def whs(alpha, deltaT, rhoM, rhoW, kappa, age):
+                '''
+                Function for seafloor subsidence (i.e., cooling of a semi-infinite 2D halfspace from RK2021)
                 
-        # Crosby and Mckenzie (2009) age-depth relationship piecewise logicals
-        age_eq_less_than_75=(seafloorAge<=75)&(seafloorAge>-1)
-        age_eq_less_than_160=(seafloorAge<=160)&(seafloorAge>75)
-        age_greater_than_160=seafloorAge>160
+                Parameters
+                -----------
+                alpha : FLOAT
+                    Thermal expansivity, in [1/K].
+                deltaT : FLOAT
+                    Mantle potential temperature, in [K].
+                rhoM : FLOAT
+                    Surface mantle density density, in kg/m3.
+                rhoW : FLOAT
+                    Water density, in kg/m3.
+                kappa :
+                    Thermal diffusivity, in [m2/s].
+                age : NUMPY ARRAY
+                    Seafloor age, in [s].
 
-        # Convert age to depth using Crosby and Mckenzie (2009) age-depth
-        # relationship for oceanic crust
-        depth=np.zeros(seafloorAge.shape)
-        depth[age_eq_less_than_75]=2652+324*np.sqrt(seafloorAge[age_eq_less_than_75])
-        depth[age_eq_less_than_160]=5028+5.26*seafloorAge[age_eq_less_than_160]-250*np.sin((seafloorAge[age_eq_less_than_160]-75)/30)
-        depth[age_greater_than_160]=5750
-        depth[seafloorAge<0]=np.nan
-        depth[np.isnan(seafloorAge)]=np.nan
+                Return
+                -------
+                Depth of seafloor with respect to a mid-ocean-ridge depth, in m. 
 
-        # Modify the input topography with thermal subsidence calculations.
+                '''
+                return 2*(alpha*deltaT*( rhoM / (rhoM-rhoW) )) * ( (kappa * age) / np.pi )**(1/2);
+
+            def ws(whs, a1, a2, b2, ti, tmax, tstar, Hstar, age):
+                '''
+                Function for correction of seafloor subsidence (i.e., cooling of a
+                semi-infinite 2D halfspace from RK2021) when mantle internal heating
+                changes with respect to present-day.
+                
+                Parameters
+                -----------
+                whs : NUMPY ARRAY
+                    Depth of seafloor with respect to a mid-ocean-ridge depth and
+                    as calculated from whs (RK2021), in [m].
+                a1 : FLOAT
+                    Slope for linear relation between H* in the conductive phase,
+                    in [1/Myr^(1/2)].
+                a2 : FLOAT
+                    Slope for linear relation between H* in the convection phase,
+                    in [-].
+                b2 : FLOAT
+                    Intercept for linear relation between H* in the conductive
+                    phase, in [-].
+                ti : FLOAT
+                    Intersection with horizontal axis (ext fig 2a), in [Myr].
+                tmax : FLOAT
+                    Maximum age of seafloor, in [Myr].
+                tstar : FLOAT
+                    Onset of asthenospheric convection, in [Myr].
+                Hstar : FLOAT
+                    Non-dimensionalized internal heating, in [-].
+                age : NUMPY ARRAY
+                    Seafloor age, in [Myr].
+
+                Return
+                -------
+                Depth of seafloor with respect to a mid-ocean-ridge depth, in m. 
+
+                '''
+                # Conductive dominated
+                whs[age<tstar] = whs[age<tstar]*(1 - a1*Hstar*(np.sqrt(age[age<tstar])-np.sqrt(ti)) )
+                # Convection dominated
+                whs[age>=tstar]  = whs[age>=tstar]*(1 - a1*Hstar*(np.sqrt(tstar)-np.sqrt(ti)) +\
+                                                (Hstar*(a1*(np.sqrt(tstar)-np.sqrt(ti))-a2)-b2)*\
+                                                (np.sqrt(age[age>=tstar])-np.sqrt(tstar))/\
+                                                (np.sqrt(tmax)-np.sqrt(tstar)))
+                return whs
+            
+            # Determine the onset of asthenospheric convection from
+            # the input internal heating.
+            ## Find the closest H value from the RK2021 paper
+            ## Find the index of that internal heating value
+            i = np.argwhere(np.min(np.abs(parameters['set1']['H']-method['H'])) == np.abs(parameters['set1']['H']-method['H']))[0][0]
+
+            # Calculate cooling from a semi-infinite 2D half-space
+            whsi = whs(parameters['set1']['alpha'],
+                       parameters['set1']['deltaT'],
+                       parameters['set1']['rhoM'],
+                       parameters['set1']['rhoW'],
+                       parameters['set1']['kappa'],
+                       seafloorAge*Myr2s)
+            
+            # Apply the correction terms to whsi for internal conditions
+            # and add the depth of the MOR.
+            wsi  = ws(cp.deepcopy(whsi),
+                    parameters['set1']['a1'],
+                    parameters['set1']['a2'],
+                    parameters['set1']['b2'],
+                    parameters['set1']['ti']/Myr2s,
+                    parameters['set1']['tmax']/Myr2s,
+                    parameters['set1']['tstar'][i]/Myr2s,
+                    parameters['set1']['Hstar'][i],
+                    seafloorAge) + (1e3)*method['MORDepthkm'];
+        
+            # Set seafloor area with no seafloor ages to nan.
+            wsi[seafloorAge<0]=np.nan;
+            wsi[np.isnan(seafloorAge)]=np.nan
+
+            # Modify the input topography with thermal subsidence calculations.
+            topography = wsi;
+
+        else:
+            # Crosby and Mckenzie (2009) age-depth relationship piecewise logicals
+            age_eq_less_than_75=(seafloorAge<=75)&(seafloorAge>-1)
+            age_eq_less_than_160=(seafloorAge<=160)&(seafloorAge>75)
+            age_greater_than_160=seafloorAge>160
+
+            # Convert age to depth using Crosby and Mckenzie (2009) age-depth
+            # relationship for oceanic crust
+            depth=np.zeros(seafloorAge.shape)
+            depth[age_eq_less_than_75]=2652+324*np.sqrt(seafloorAge[age_eq_less_than_75])
+            depth[age_eq_less_than_160]=5028+5.26*seafloorAge[age_eq_less_than_160]-250*np.sin((seafloorAge[age_eq_less_than_160]-75)/30)
+            depth[age_greater_than_160]=5750
+            depth[seafloorAge<0]=np.nan
+            depth[np.isnan(seafloorAge)]=np.nan
+
+            # Modify the input topography with thermal subsidence calculations.
+            topography = depth;
+        
+        # Report
         if verbose:
             print('--------------seafloorAge')
             print(seafloorAge)
@@ -1659,9 +2005,6 @@ class BathyRecon():
             print(topography)
             print(~np.isnan(topography))
             print(topography.shape)
-
-
-        topography = depth;
         
         ## Return depth
         return topography
@@ -2069,7 +2412,7 @@ class BathyRecon():
         if age == 0:
             # Create copy of the measured present-day topography that is
             # at the same resolution as the reconstruction models.
-            os.system("gmt grdsample {0} -G{1} -I{2} -Rd".format(self.directories['etopo']+"/"+self.etopofid,
+            os.system("gmt grdsample {0} -G{1} -I{2} -Rd -Vq".format(self.directories['etopo']+"/"+self.etopofid,
                                                                     os.getcwd()+'/tempetopo.nc',
                                                                     resolution))
             # Read etopo1 and define etopo bathymetry
@@ -2649,6 +2992,212 @@ class BathyRecon():
 
 
 
+class BathySynthBogumil24():
+    '''
+    BathySyntheticBogumil24 is a class used to calculate synthetic bathymetry models
+    that as shown in Bogumil et al. (2024). Note that the Basins class is not used
+    by this class since bathymetry is never represented spatially with latitude,
+    longitude, and bathymetry. Instead BasinsSynth is used to format synthetic
+    bathymetry in a similar way.
+        
+    The methods are as follows and described in the paper:
+    1)  Basins share equal bathymetry distributions, and is in contrast to geologic reconstructions.
+    2)  Deep bathymetry (>1km) is created with a gaussian type distribution (sigma = 500 m)
+    3)  Shallow bathymetry (<=600 m) is uniform and varied in areal extents within
+        realistic ranges predicted over the reconstruction period (0-80 Ma).
+
+    Distinctions in created synthetic bathymetry compared to Bogumil et al. (2024)
+    1)  Basin mixing parameters from LOSCAR were held constant in Bogumil et al. (2024)
+        at present-day values. Here, basin connectivity bathymetry (not mixing
+        parameters) are defined with the gaussian bathymetry distribution. In other
+        classes a user can define whether they want to define basin mixing parameters
+        using these bathymetry distributions (basin and connective) or LOSCAR's
+        present-day default values.
+    2)  The total ocean basin volume calculation is now (total area)*(bathymetry distribution)
+    3)  I now calculate the ocean basin volume distribution basins on the basin
+        area decimal fractions.
+    '''
+
+    def __init__(self, optSynthModel = 'Model1', ModelName='myModel'):
+        self.x = 1;
+
+
+        # Import(s)
+        import shutil
+
+        # Define Some Default LOSCAR variables
+        self.LOSCARValues = {};
+        self.LOSCARValues['AOC'] = 3.49e14; # Seafloor area as defined in LOSCAR [m2]
+        self.LOSCARValues['hb10'] = 250; # Depth of the high latitude surface box [m], note that this is note the depth of the high latitude seafloor.
+        self.LOSCARValues['fanoc'] = np.array(([.26],[.18],[.46],[.10])); # A, I, P, and Highlat surface area fraction [%]
+        self.LOSCARValues['binEdges'] = np.array(([0.],[.1],[.6],[1.],[1.5],[2.],[2.5],[3.],[3.5],[4.],[4.5],[5.],[5.5],[6.5]))*1e3; # Bathymetry distribution bin edges as defined in LOSCAR [m]
+        
+        # Define synthetic model parameters (Deep bathymetry gaussian sigma, Shallow bathymetry extent)
+        self.optSynthModel = optSynthModel;
+        self.ModelName = ModelName;
+        if self.optSynthModel == 'Model1':
+            # Factor to vary seafloor area by with respect to present-day (LOSCAR seafloor area)
+            self.AOC_factor = np.array([.96,1.2,13]);
+        
+        
+        # FIXME: 
+        shallow_bathy_percent = .025;
+        self.synth_model_para = {'shallow_bathy_percent':shallow_bathy_percent};
+
+        # Define some directories
+        self.directories = {}
+        self.directories['output'] = os.getcwd()+'/bathymetries/{0}/{1}'.format(optSynthModel, ModelName)
+
+    def makeSynthModels(self):
+        '''
+        makeSynthModels is a method used to create bathymetry distributions
+
+        Model1:
+            Gaussian distributed deep bathymetry with varying shallow seafloor area.
+            E.g., (..., 13.6, 68.2, 13.6, ...) normal distribution w/ mu=bin-2500 m,
+            sigma = 250 m
+
+        Parameters
+        -----------
+
+
+        
+        
+        
+        '''
+
+        if self.optSynthModel == 'Model1':
+            # Gaussian distributed deep bathymetry with varying shallow seafloor area.
+            # Description of the distribution used for the synthetic bathymetry models
+            # (..., 13.6, 68.2, 13.6, ...) normal distribution w/ mu=bin-250 m, sigma = 250 m
+            # Note that mu and sigma only hold for distributions applied to bins which are spaced in 500 m intervals. (i.e. mu = 2000 m,..., 4500 m)
+            deep_dist = np.array([(100-34.1*2 -13.6*2)/2, 13.6, 34.1*2, 13.6, (100-34.1*2 -13.6*2)/2])*1e-2;
+            
+            # Make/clean directories and assign file locations
+            #self.LOSCARValues['mod_fid_dir'] = [self.LOSCARValues['mod_fid_dir'][0].format(subdir,'{0:03}'),self.LOSCARValues['mod_fid_dir'][1].format(subdir,'{0:03}')]
+            #if os.path.exists(self.LOSCARValues['mod_fid_dir'][0].split(subdir)[0]+subdir): 
+            #    shutil.rmtree(self.LOSCARValues['mod_fid_dir'][0].split(subdir)[0]+subdir)
+            #if not os.path.exists(self.LOSCARValues['mod_fid_dir'][0].split(subdir)[0]+subdir):
+            #    os.makedirs(self.LOSCARValues['mod_fid_dir'][0].split(subdir)[0]+subdir)
+                
+            
+            # Placeholder make distributions
+            self.LOSCARValues['binEdges'][5:-3]
+            
+            # Dictionary to hold dictionaries of synthetic bathymetry parameters
+            self.BathymetryParms = {};
+
+            # 
+            interation = 0;
+            for areaFactori in np.linspace(self.AOC_factor[0],self.AOC_factor[1],int(self.AOC_factor[2])):
+                areaFactori = round(areaFactori,3);
+                for bin_idx in range(2,len(self.LOSCARValues['binEdges'])-7):
+                    # Iterates over binEdges at which gaussian distributed bathymetry is maximum.
+                    #   I.e., we create bathymetry models with seafloor at depths defined in the binEdges.
+                    
+                    # Create distribution vector
+                    distribution = np.zeros((1,len(self.LOSCARValues['binEdges'])));
+                    # Set deep bathymetry fraction for distribution
+                    distribution[0][bin_idx+2:bin_idx+7] = deep_dist*( 1 - self.synth_model_para['shallow_bathy_percent']*2.0 )/areaFactori;
+                    
+                    # Set shallow bathymetry fraction for distribution
+                    distribution[0][1] = (1- np.sum(distribution[0][bin_idx+2:bin_idx+7]) )/2; # (1-2*(areaFactori-1));
+                    distribution[0][2] = (1- np.sum(distribution[0][bin_idx+2:bin_idx+7]) )/2; # (1-2*(areaFactori-1));
+
+                    # Calculate ocean volume per basin using AOC and distribution + highlat depth and area [m3]
+                    ## Define fdvol as the volume, m3, of each basin and the high latitude box.
+                    fdvol   = areaFactori*self.LOSCARValues['AOC'] * (distribution * self.LOSCARValues['binEdges'].transpose()) * (self.LOSCARValues['fanoc']);
+                    ## Redefine fdvol as a vector of ocean basin volume, in decimal percentage
+                    ## of total ocean basin volume. Note that the high latitude box component
+                    ## volume is removed in these percentages. 
+                    fdvol   = np.sum(fdvol[:-1],1)/np.sum(np.sum(fdvol[:-1],1)); 
+
+                    # Calculate VOC using AOC and distribution + highlat depth and area [m3]
+                    #VOC = self.LOSCARValues['hb10']*areaFactori*self.LOSCARValues['AOC']*(self.LOSCARValues['fanoc'][3]) + np.sum( areaFactori*self.LOSCARValues['AOC'] * (distribution * self.LOSCARValues['binEdges'].transpose()) * (self.LOSCARValues['fanoc'][0:3]*1e-2) ); # [meters^3]
+                    VOC     = np.sum( areaFactori*self.LOSCARValues['AOC'] * (distribution * self.LOSCARValues['binEdges'].transpose()) * (self.LOSCARValues['fanoc']) ); # m3.
+
+                    # Constant high latitude area
+                    #fanoc = (1/(self.LOSCARValues['fanoc'][-1]*areaFactori))
+                    #fanoc = np.append( fanoc, self.LOSCARValues['fanoc'][0:3]*((1-fanoc)/.9) )
+                    
+                    
+                    # Stack varibles VOC, AOC, fanoc, hb10, distribution                    
+                    outputi = np.hstack( (VOC,self.LOSCARValues['AOC']*areaFactori) )
+                    outputi = np.hstack( (outputi, self.LOSCARValues['fanoc'].reshape((4,))) )
+                    outputi = np.hstack( (outputi, self.LOSCARValues['hb10']) )
+                    
+                    for i in range(3):
+                        outputi = np.hstack( (outputi, distribution[0]) )
+
+                    modeliString = 'aF{}_U{}m'.format(str(1e2*areaFactori).replace('.',','), str(int(self.LOSCARValues['binEdges'][bin_idx])));
+                    self.BathymetryParms[modeliString] = {};
+                    self.BathymetryParms[modeliString]['VOC']           = VOC;
+                    self.BathymetryParms[modeliString]['AOC']           = self.LOSCARValues['AOC']*areaFactori;
+                    self.BathymetryParms[modeliString]['fanoc']         = self.LOSCARValues['fanoc'].reshape((4,));
+                    self.BathymetryParms[modeliString]['fdvol']         = fdvol
+                    self.BathymetryParms[modeliString]['hb10']          = self.LOSCARValues['hb10'];
+                    self.BathymetryParms[modeliString]['distribution']  = distribution[0][1:];
+                    
+    def saveSynthModels(self, verbose=True):
+        '''
+        saveSynthModels is a method used to format synthetic bathymetry models
+        in a similar format as other ExoCcycle bathymetry models. This will allow
+        for interaction with the Earth system model.
+
+        Parameters
+        -----------
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        '''
+        # Create the directory to store synthetic bathymetry models within
+        utils.create_file_structure(["/bathymetries/{}".format(self.ModelName)], root=False, verbose=False);
+
+        # Iterate over changes in deep and shallow bathymetry distributions
+        for areaFactori in np.linspace(self.AOC_factor[0],self.AOC_factor[1],int(self.AOC_factor[2])):
+            areaFactori = round(areaFactori,3);
+            for bin_idx in range(2,len(self.LOSCARValues['binEdges'])-7):
+                # Iterates over binEdges at which gaussian distributed bathymetry is maximum.
+                #   I.e., we create bathymetry models with seafloor at depths defined in the binEdges.
+
+                modeliString = 'aF{}_U{}m'.format(str(1e2*areaFactori).replace('.',','), str(int(self.LOSCARValues['binEdges'][bin_idx])));
+                self.BathymetryParms[modeliString]['VOC']
+                self.BathymetryParms[modeliString]['AOC']
+                self.BathymetryParms[modeliString]['fanoc']
+                self.BathymetryParms[modeliString]['hb10']
+
+
+                # Create object to hold bathymery components for a single synthetic bathymetry model.
+                BasinSynthi = utils.BasinsSynth(dataDir=os.getcwd()+"/bathymetries/{}".format(self.ModelName), filename='bathymetry_{}_wBasins.nc'.format(modeliString), radius=6371e3)
+
+                # Set bathymetry distributions for basins
+                BasinSynthi.defineBasinParameters(
+                    BasinCnt = 3,
+                    Distribution = self.BathymetryParms[modeliString]['distribution']*1e2,
+                    binEdges = self.LOSCARValues['binEdges']*1e-3,
+                    AOC = self.BathymetryParms[modeliString]['AOC'],
+                    VOC = self.BathymetryParms[modeliString]['VOC'],
+                    fanoc=self.BathymetryParms[modeliString]['fanoc'],
+                    fdvol=self.BathymetryParms[modeliString]['fdvol'],
+                    verbose=verbose);
+                
+                # Set basin connectivity parameters
+                # FIXME:
+                #BasinSynthi.defineBasinConnectivityParameters()
+
+                # Write bathymetry distributions to netCDF4s
+                BasinSynthi.saveCcycleParameter(verbose=verbose)
+                
+
+
+
+
+
+
+        
+
+    
+
 
 
 
@@ -2898,6 +3447,10 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
         (excluding the high latitude ocean volume).
     bathymetryAreaFrac : DICTIONARY
         A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
+        the precent basin area not within the high latitude region, normalized
+        to the total seafloor area (including the high latitude area).
+    bathymetryAreaFracG : DICTIONARY
+        A dictionary with entries ["Basin0", "Basin1",...]. Each entry contains
         the precent basin area, normalized to the total seafloor area (including
         the high latitude area).
     bathymetryAreaDist_wHighlatG : NUMPY ARRAY
@@ -2926,6 +3479,7 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
     # Setup dictionaries to hold outputs (basin distributions, area fractions, and volume fractions)
     bathymetryAreaDist = {};
     bathymetryAreaFrac = {};
+    bathymetryAreaFracG = {};
     bathymetryVolFrac  = {};
     
     basinIDs = np.unique(basinIDA[~np.isnan(basinIDA)]);
@@ -2945,6 +3499,7 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
 
         bathymetryAreaDisti, binEdges = np.histogram((1e-3)*bathy2, bins=binEdges, weights=weights2);
         bathymetryAreaDist['Basin{:0.0f}'.format(basinIDi)] = 100*(bathymetryAreaDisti/np.sum(bathymetryAreaDisti));
+        bathymetryAreaFracG['Basin{:0.0f}'.format(basinIDi)] = np.sum(areaWeights[logical2])/np.nansum(areaWeights[~np.isnan(bathymetry) & ~(bathymetry==0)])
         bathymetryAreaFrac['Basin{:0.0f}'.format(basinIDi)] = np.sum(areaWeights[logical1 & logical2])/np.nansum(areaWeights[~np.isnan(bathymetry) & ~(bathymetry==0)])
         bathymetryVolFrac['Basin{:0.0f}'.format(basinIDi)]  = np.sum(bathymetry[logical1 & logical2]*areaWeights[logical1 & logical2]) / np.sum(bathymetry[logical1]*areaWeights[logical1]);
 
@@ -3039,7 +3594,7 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
 
-    return bathymetryAreaDist, bathymetryVolFrac, bathymetryAreaFrac, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges
+    return bathymetryAreaDist, bathymetryVolFrac, bathymetryAreaFrac, bathymetryAreaFracG, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges
 
 
 
