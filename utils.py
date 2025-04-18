@@ -1806,6 +1806,7 @@ class BasinsEA():
             ## representing equal area, so no weights for the std need to be defined.
             dataSTD = np.std(self.eaPoint.depth);
 
+            '''
             ## Create a list of property difference between connected nodes
             ### Assign and empty vector to self.dataEdgeDiff 
             self.dataEdgeDiff = np.array([], dtype=np.float64)
@@ -1841,13 +1842,19 @@ class BasinsEA():
                 node1+=1;
             ## Remove outliers from self.dataEdgeDiff and calculate std
             def remove_outliers_iqr(data):
-                """Removes outliers from a NumPy array using the IQR method.
+                """
+                remove_outliers_iqr function removes outliers from 
+                a Numpy array using the IQR method.
 
-                Args:
-                    data (np.ndarray): The input NumPy array.
+                Parameters
+                -----------
+                data : NUMPY ARRAY
+                    The input NumPy array.
 
-                Returns:
-                    np.ndarray: A new NumPy array with outliers removed.
+                Returns
+                --------
+                filtered_data : NUMPY ARRAY
+                    A new NumPy array with outliers removed.
                 """
                 q1 = np.percentile(data, 25)
                 q3 = np.percentile(data, 75)
@@ -1859,6 +1866,7 @@ class BasinsEA():
 
             ### Get outliers filtered dataEdgeDiff using the IQR method.
             self.dataEdgeDiffIQRFiltered = remove_outliers_iqr(self.dataEdgeDiff);
+            
 
             ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
             ## This is appropriate since each edge is bidirectional.
@@ -1879,7 +1887,7 @@ class BasinsEA():
             ## Define dataSTD and dataRange with self.dataEdgeDiffIQRFiltered
             dataSTD   = std;
             dataRange = np.max(self.dataEdgeDiffIQRFiltered) - np.min(self.dataEdgeDiffIQRFiltered)
-
+            
 
             ## Define the range for the list of property difference between
             ## connected nodes
@@ -1889,6 +1897,7 @@ class BasinsEA():
             ## connected nodes Node should be representing equal area, so no
             ## weights for the std need to be defined.
             #dataEdgeDiffSTD = np.std(self.eaPoint.depth);
+            '''
 
 
             ## Iterate through each node to add edges
