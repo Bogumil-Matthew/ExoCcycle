@@ -720,8 +720,13 @@ class BathyMeasured():
         # Define lat/lon with the same names as dimensions to make variables.
         lat = ncfile.createVariable('lat', np.float32, ('lat',));
         lat.units = 'degrees_north'; lat.long_name = 'latitude';
+        ncfile.variables['lat'].axis = 'Y';
+        ncfile.variables['lat'].actual_range = [-90,90];
+
         lon = ncfile.createVariable('lon', np.float32, ('lon',));
         lon.units = 'degrees_east'; lon.long_name = 'longitude';
+        ncfile.variables['lon'].axis = 'X'
+        ncfile.variables['lon'].actual_range = [-180,180];
 
         # Define a 2D variable to hold the elevation data
         bathy = ncfile.createVariable('bathymetry',np.float64,('lat','lon'))
@@ -1123,14 +1128,6 @@ class BathyRecon():
                                         write=True,
                                         verbose=False)
                 
-                '''
-                try:
-                    basins.applyMergeBasinMethods(reconAge,
-                                                  utils.mergerPackages(self.model),
-                                                  maxBasinCnt=maxBasinCnt);
-                except:
-                    pass
-                '''
                 basins.applyMergeBasinMethods(reconAge,
                                                 utils.mergerPackages(self.model),
                                                 maxBasinCnt=maxBasinCnt);
@@ -1138,9 +1135,7 @@ class BathyRecon():
                 
                 # Assign basins as a BathyRecon class attribute.
                 self.basins = basins;
-            
-                sds
-            
+                        
 
             elif self.thermalSubMethod['type'] == "CM2009":
                 # 9. Save bathymetry model w/o the ocean volume corrections
@@ -3536,7 +3531,9 @@ def calculateBathymetryDistributionBasin(bathymetry, latitudes, longitudes, basi
 
         # Create colormap
         ## Set colormap
-        cmap = plt.get_cmap("Pastel1")
+        #cmap = plt.get_cmap("Pastel1")
+        cmap = plt.get_cmap("Set1")
+
         ## Extract basinCnt colors from the colormap
         colors_rgb = [cmap(i) for i in range(cnt)]
         ## Convert RGB to hex
