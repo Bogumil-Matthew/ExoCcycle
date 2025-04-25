@@ -1658,7 +1658,7 @@ class BasinsEA():
 
 
     def defineBasins(self, minBasinCnt = 3,
-                     method = "Louvain",
+                     detectionMethod = {"method":"Louvain", "resolution":1},
                      reducedRes={"on":False,"factor":15},
                      read=False,
                      write=False,
@@ -1673,12 +1673,23 @@ class BasinsEA():
         minBasinCnt : INT
             The minimum amount of basins the user chooses to define
             for the given bathymetry model input.
-        method : STRING
-            Determines the implemented community detection algorithm.
-            The options are either Girvan-Newman or Louvain. The former
-            is more robust with low scalability and the latter is practical
-            but produces non-deterministic communities. The default is
-            Louvain.
+        detectionMethod : DICTIONARY
+            Determines the implemented community detection algorithm and
+            other properties to use for community detection. This dictionary
+            has the following keys:
+                method : STRING
+                    The options are "Girvan-Newman", "Louvain", or
+                    "Louvain-Girvan-Newman". The former is more
+                    robust with low scalability and the latter are
+                    practical but produces non-deterministic communities.
+                    The default is "Louvain".
+                resolution : FLOAT
+                    The resolution value to be used with the Louvain
+                    community detection algorithm. Values greater than 1,
+                    makes the algorithm favor smaller communities (more
+                    communities). Values less than 1, makes the algorithm
+                    favor larger communities (less communities). The default
+                    is 1.
         reducedRes : DICTIONARY
             Option to reduce the resolution of the basin definition
             network calculation. Note that this should be turned
@@ -1798,15 +1809,8 @@ class BasinsEA():
             for node, values in points.items():
                 #if not np.isnan(values[2]):
                 G.add_node(node, pos=values[0:2], depth=values[2], areaWeightm2=values[3]);
+
             
-            ## Define the range of input node edge values
-            dataRange = np.max(self.eaPoint.depth)-np.min(self.eaPoint.depth);
-
-            ## Define the std of the input node edge values. Node should be
-            ## representing equal area, so no weights for the std need to be defined.
-            dataSTD = np.std(self.eaPoint.depth);
-
-            '''
             ## Create a list of property difference between connected nodes
             ### Assign and empty vector to self.dataEdgeDiff 
             self.dataEdgeDiff = np.array([], dtype=np.float64)
@@ -1866,12 +1870,14 @@ class BasinsEA():
 
             ### Get outliers filtered dataEdgeDiff using the IQR method.
             self.dataEdgeDiffIQRFiltered = remove_outliers_iqr(self.dataEdgeDiff);
-            
 
             ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
             ## This is appropriate since each edge is bidirectional.
             ## As a result, the mean should be zero.
-            std = np.std( np.append(self.dataEdgeDiffIQRFiltered, -self.dataEdgeDiffIQRFiltered) );
+            dataEdgeDiffSTD = np.std( np.append(self.dataEdgeDiffIQRFiltered, -self.dataEdgeDiffIQRFiltered) );
+
+            ## Define dataRange with self.dataEdgeDiffIQRFiltered
+            dataEdgeDiffRange = np.max(self.dataEdgeDiffIQRFiltered) - np.min(self.dataEdgeDiffIQRFiltered)
 
             ## Set lower bound for difference value to influence connectivity
             ## Assuming a normal distribution
@@ -1880,25 +1886,77 @@ class BasinsEA():
             ## factor = 3: Strength in node connection changes over 74% data with greater variation than the 26% with the lowest variation.
             ## factor = 2: Strength in node connection changes over 57% data with greater variation than the 38% with the lowest variation.
             ## factor = 1: Strength in node connection changes over 0% data with greater variation than the 68% with the lowest variation.
-            factor = 4;
-            lowerbound = std*factor;
-            upperbound = std/factor;
+            factor = 2;
+            #lowerbound = dataEdgeDiffSTD/factor;
+            lowerbound = 0;
+            upperbound = dataEdgeDiffSTD*factor;
 
-            ## Define dataSTD and dataRange with self.dataEdgeDiffIQRFiltered
-            dataSTD   = std;
-            dataRange = np.max(self.dataEdgeDiffIQRFiltered) - np.min(self.dataEdgeDiffIQRFiltered)
-            
+            ## Define the std and dataRange to be used in the following calculations of edge weights.
+            useGlobalDifference = False;
+            useEdgeDifference = False;
+            useEdgeGravity = False;
+            useLogistic = True;
+            if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
+                dataSTD   = dataEdgeDiffSTD;
+                dataRange = dataEdgeDiffRange;
+                ## Define the weight (S) at the upper bound of values1-values2 difference
+                S_at_upperbound = .05
 
-            ## Define the range for the list of property difference between
-            ## connected nodes
-            #dataEdgeDiffRange = np.max(self.eaPoint.depth)-np.min(self.eaPoint.depth);
+                ## Calculate the stretch factor for the exponential decay, such that
+                ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                stretchEdgeDifference = (lowerbound-upperbound)/np.log(S_at_upperbound)/dataSTD
 
-            ## Define the std for the list of property difference between
-            ## connected nodes Node should be representing equal area, so no
-            ## weights for the std need to be defined.
-            #dataEdgeDiffSTD = np.std(self.eaPoint.depth);
-            '''
+                # Set distance power
+                disPower = -1;
 
+            elif useGlobalDifference and not (useEdgeDifference or useEdgeGravity):
+                ## Define the range of input node edge values
+                dataRange = np.max(self.eaPoint.depth)-np.min(self.eaPoint.depth);
+
+                ## Define the std of the input node edge values. Node should be
+                ## representing equal area, so no weights for the std need to be defined.
+                dataSTD = np.std(self.eaPoint.depth);
+
+                # Set distance power
+                disPower = -1;
+
+            elif useEdgeGravity and not (useEdgeDifference or useGlobalDifference):
+                ## Define the range of input node edge values
+                dataRange = np.max(self.eaPoint.depth)-np.min(self.eaPoint.depth);
+
+                ## Define the std of the input node edge values. Node should be
+                ## representing equal area, so no weights for the std need to be defined.
+                dataSTD = np.std(self.eaPoint.depth);
+
+                # Set distance power
+                disPower = -2;
+            elif useLogistic:
+                # Create attribute dictionary for logistic edge weight method
+                logisticAttributes = {};
+
+                # Define some attributes for the logistic edge weight method
+                # S(property_difference=lowerbound) = S_at_lower
+                # S(property_difference=upperbound) = S_at_upper
+                S_at_lower = 0.1;
+                S_at_upper = 0.9;
+                lowerbound = dataEdgeDiffSTD
+                upperbound = dataEdgeDiffSTD*factor
+
+                # Define attributes for the logistic edge weight method
+                # logisticAttributes["L"]       : Maximum value of logistic curve
+                # logisticAttributes["k"]       : Controls rate of change of curve 
+                # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                logisticAttributes["L"] = 1
+                xl = np.log( (logisticAttributes["L"]-S_at_upper)/S_at_upper )
+                xu = np.log( (logisticAttributes["L"]-S_at_lower)/S_at_lower )
+                logisticAttributes["k"] = -1*(xl-xu)/(lowerbound-upperbound)
+                logisticAttributes["shift"] = logisticAttributes["k"]*lowerbound + xl
+                
+                # Set distance power
+                disPower = -1;
+
+            else:
+                print("No method chosen.")
 
             ## Iterate through each node to add edges
             node1=0;
@@ -1924,43 +1982,92 @@ class BasinsEA():
                         # Assign bathymetryj
                         values2 = points[int(node2)][2];
 
-                        # Determine average property (e.g., bathymetry) between two nodes.
-                        # propertyAve= (values1+values2)/2;
-                        # Determine the minimum property (e.g., bathymetry) between two nodes.
-                        # propertyMin= np.min(np.array([values1, values2]))
-                        # Determine the absolute value of the inverse difference between two
-                        # node properties. Set propertyInv to range of global data for values
-                        # that are the same. Then normalize by the range 
-                        SInv = 1/np.abs((values1-values2))
-                        if np.isinf(SInv):
-                            SInv = 1;
 
-                        # Determine Exponential decaying property weight between two
-                        stretch = .2
-                        SExp = ( np.exp( (np.abs(dataRange) - np.abs(values1-values2))/(stretch*dataSTD) ) ) / np.exp( (np.abs(dataRange)/(stretch*dataSTD) ) )
+                        if useGlobalDifference:
+                            # Determine average property (e.g., bathymetry) between two nodes.
+                            # propertyAve= (values1+values2)/2;
+                            # Determine the minimum property (e.g., bathymetry) between two nodes.
+                            # propertyMin= np.min(np.array([values1, values2]))
+                            # Determine the absolute value of the inverse difference between two
+                            # node properties. Set propertyInv to range of global data for values
+                            # that are the same. Then normalize by the range 
+                            SInv = 1/np.abs((values1-values2))
+                            if np.isinf(SInv):
+                                SInv = 1;
 
-                        # Calculate parabolic relationship for weight (AijExp and AijExpdata)
-                        ## BreakPoint for exp-parabolic relationship change
-                        breakPointWeight = stretch; # should be set to where curves are equal
-                        breakPointWeight = 1
-                        breakPointDiff = (dataRange - (stretch*dataSTD)*np.log(breakPointWeight*np.exp(dataRange/(stretch*dataSTD))) )
+                            # Determine Exponential decaying property weight between two
+                            stretch = .2
+                            SExp = ( np.exp( (np.abs(dataRange) - np.abs(values1-values2))/(stretch*dataSTD) ) ) / np.exp( (np.abs(dataRange)/(stretch*dataSTD) ) )
 
-                        ## Recalse Inverse weight 
-                        if not (breakPointWeight == 1):
-                            SInv     = SInv    * (breakPointWeight*breakPointDiff)
+                            # Calculate parabolic relationship for weight (AijExp and AijExpdata)
+                            ## BreakPoint for exp-parabolic relationship change
+                            breakPointWeight = stretch; # should be set to where curves are equal
+                            breakPointWeight = 1
+                            breakPointDiff = (dataRange - (stretch*dataSTD)*np.log(breakPointWeight*np.exp(dataRange/(stretch*dataSTD))) )
 
-                        ## Use inverse weight if difference in values are large.
-                        if SExp<breakPointWeight:
-                            S = SInv;
-                        elif SExp>=breakPointWeight:
-                            S = SExp;
+                            ## Recalse Inverse weight 
+                            if not (breakPointWeight == 1):
+                                SInv     = SInv    * (breakPointWeight*breakPointDiff)
 
-                        # Note that setting the breakPointWeight to the following values
-                        # has the following affect
-                        #
-                        # breakPointWeight = 0       --> Uses only Exponential relationship
-                        # breakPointWeight > 1       --> Uses only Inverse relationship
-                        # 0 < breakPointWeight < 1   --> Uses both Exponential & Inverse relationship. Used relationship depends on how similar properties are.
+                            ## Use inverse weight if difference in values are large.
+                            if SExp<breakPointWeight:
+                                S = SInv;
+                            elif SExp>=breakPointWeight:
+                                S = SExp;
+
+                            # Note that setting the breakPointWeight to the following values
+                            # has the following affect
+                            #
+                            # breakPointWeight = 0       --> Uses only Exponential relationship
+                            # breakPointWeight > 1       --> Uses only Inverse relationship
+                            # 0 < breakPointWeight < 1   --> Uses both Exponential & Inverse relationship. Used relationship depends on how similar properties are.
+                        elif useEdgeDifference:
+                            ## Define the upper and lower bound of the property difference (np.abs(values1-values2))
+                            ## for an exponentially decaying of weight is calculated.
+                            ## Value is calculated above.
+                            # lowerbound = dataEdgeDiffSTD*factor;
+                            # upperbound = dataEdgeDiffSTD/factor;
+                            
+                            ## Define the weight (S) at the upper bound of values1-values2 difference
+                            ## Value is set above.
+                            # S_at_upperbound = .1
+
+                            ## Calculate the stretch factor for the exponential decay, such that
+                            ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                            ## Value is calculated above.
+                            # stretchEdgeDifference = (lowerbound-upperbound)/np.log(S_at_upperbound)/dataSTD
+
+                            ## Calculate the weight 
+                            S  = ( np.exp( (np.abs(dataRange) - (0+np.abs(values1-values2)))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## If value is within lowerbound distance then set connection strength to a value that
+                            ## normalizes to 1.
+                            if np.abs(values1-values2)<=lowerbound:
+                                S = np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## Normalize weights to weight value at lowerbound
+                            S /= np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## Set minimum S value to S_at_upperbound
+                            if S < S_at_upperbound:
+                                S = S_at_upperbound;
+
+                        elif useEdgeGravity:
+                            # Note that the gravity model represents node edges weights
+                            # with (property1*property2)/(distanceV**2).
+
+                            # Calculate the product of the property weights:
+                            # The inverse distance squared is added with the
+                            # later calculated nodeSpacingNormalizer.
+                            S = values1*values2;
+
+                        elif useLogistic:
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2)
+                            # Logistic function
+                            S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*diff+logisticAttributes["shift"]))**(-1)
+
+
 
 
 
@@ -1971,7 +2078,7 @@ class BasinsEA():
                         distanceV = haversine_distance(coords1[0], coords1[1],
                                                        coords2[0], coords2[1],
                                                        1);
-                        nodeSpacingNormalizer = 1/distanceV;
+                        nodeSpacingNormalizer = distanceV**disPower;
                         
 
                         # Set edge
@@ -1994,7 +2101,7 @@ class BasinsEA():
 
 
             # Find communities of nodes using the Girvan-Newman algorithm
-            self.findCommunities(method = method, minBasinCnt = minBasinCnt);
+            self.findCommunities(method = detectionMethod["method"], minBasinCnt = minBasinCnt, resolution=detectionMethod["resolution"]);
 
             ###########################
             ### Write network Model ###
@@ -2546,7 +2653,7 @@ class BasinsEA():
                 plt.title("Geographic Network of points")
                 plt.show()
 
-    def findCommunities(self, method = "Louvain", minBasinCnt=1):
+    def findCommunities(self, method = "Louvain", minBasinCnt=1, resolution=1):
         """
         findCommunities uses the Girvan-Newman or Louvain community
         detection algorithm to determine communities of nodes (basins).
@@ -2564,7 +2671,12 @@ class BasinsEA():
         minBasinCnt : INT
             The minimum amount of basins the user chooses to define
             for the given bathymetry model input.
-
+        resolution : FLOAT
+            The resolution value to be used with the Louvain community
+            detection algorithm. Values greater than 1, makes the algorithm
+            favor smaller communities (more communities). Values less than
+            1, makes the algorithm favor larger communities (less communities).
+            The default is 1.
 
         (Re)defines
         ------------
@@ -2622,7 +2734,7 @@ class BasinsEA():
             # Perform a louvain community detection
 
             ## Run Louvain community detection
-            Lcommunities = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=1, threshold=1e-12, seed=1)
+            Lcommunities = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=resolution, threshold=1e-12, seed=1)
             self.Lcommunities = Lcommunities
 
             ## Mapping from node to community index from Louvain community detection
@@ -2700,7 +2812,7 @@ class BasinsEA():
 
         else:
             # Redefine the node community structure using Louvain communities
-            self.communitiesFinal = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=1, threshold=1e-12, seed=1)
+            self.communitiesFinal = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=resolution, threshold=1e-12, seed=1)
 
         # Set node attribute (basinIDs)
 
