@@ -1895,7 +1895,8 @@ class BasinsEA():
             useGlobalDifference = False;
             useEdgeDifference = False;
             useEdgeGravity = False;
-            useLogistic = True;
+            useLogistic = False;
+            useFittedSigmoid = True;
             if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
                 dataSTD   = dataEdgeDiffSTD;
                 dataRange = dataEdgeDiffRange;
@@ -1954,6 +1955,69 @@ class BasinsEA():
                 
                 # Set distance power
                 disPower = -1;
+            elif useFittedSigmoid:
+                # Import
+                from scipy.stats import norm
+                from scipy.optimize import curve_fit
+
+                # Define sigmoid function for fitting
+                def sigmoid(x, L, k, s):
+                    '''
+                    
+                    '''
+                    y = -L / (1 + np.exp(-k*np.abs(x)+s))
+                    return y
+
+                # Calculate the PDF with data mirror at zero. Mirroring is
+                # done since dataEdgeDiffIQRFiltered is constructed as
+                # np.abs(value1-value2).
+                self.pdf = norm.pdf(np.append(self.dataEdgeDiffIQRFiltered, -self.dataEdgeDiffIQRFiltered),
+                                0,
+                                dataEdgeDiffSTD)
+
+                ## Initial guess for parameters
+                ## These need to be automatically chosen in an appropriate way: FIXME
+                p0 = [max(self.dataEdgeDiffIQRFiltered),
+                        dataEdgeDiffSTD,
+                        dataEdgeDiffSTD]
+
+                ## Fit the curve for data mirror at zero. Mirroring is
+                # done since the pdf is constructed with mirrored
+                # data.
+                self.popt, self.pcov = curve_fit(sigmoid,
+                                                    np.append(self.dataEdgeDiffIQRFiltered,
+                                                            -self.dataEdgeDiffIQRFiltered),
+                                                    self.pdf,
+                                                    p0,
+                                                    method='trf')
+                
+                verbose = True;
+                if verbose:
+                    xValues = np.append(self.dataEdgeDiffIQRFiltered, -self.dataEdgeDiffIQRFiltered)
+                    # Plot subplot
+                    fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True);
+                    # Compare pdf w/ sigmoid function 
+                    plt.sca(axes[0])
+                    plt.plot(xValues, self.pdf/np.max(self.pdf), 'b.', alpha=1, label='pdf');
+                    plt.plot(xValues, sigmoid(xValues, *self.popt)/sigmoid(0, *self.popt), 'r.', alpha=1, label='sigmoid');
+                    plt.ylabel("Normalized weight")
+
+                    # Compare pdf, sigmoid, and original distribution of values
+                    plt.sca(axes[1])
+                    plt.plot(xValues, self.pdf, 'b.', alpha=1, label='pdf');
+                    plt.hist(xValues, alpha=.4, bins=np.linspace(np.min(xValues), np.max(xValues), 30), label='Data', density=True);
+                    plt.plot(xValues, sigmoid(xValues, *self.popt), 'r.', alpha=1, label='sigmoid');
+                    plt.ylabel("UnNormalized weight")
+                    
+                    # Plot formatting
+                    plt.legend();
+                    plt.xlabel("Difference in Node Property");
+                    plt.show();
+                verbose = False;
+
+                # Set distance power
+                disPower = -1;
+            
 
             else:
                 print("No method chosen.")
@@ -2064,11 +2128,15 @@ class BasinsEA():
                         elif useLogistic:
                             # Difference in properties at nodes
                             diff = np.abs(values1-values2)
-                            # Logistic function
+                            # Use the logistic function to calculated the edge weight component S.
                             S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*diff+logisticAttributes["shift"]))**(-1)
 
-
-
+                        elif useFittedSigmoid:
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2)
+                            # Use the pdf fitted sigmoid function
+                            # to calculate the edge weight component S.
+                            S = sigmoid(diff, *self.popt)
 
 
                         # Note that this weight contains node spacing information
@@ -2777,8 +2845,8 @@ class BasinsEA():
             isolatedCommunitiesCnt = len(Lcommunities)-len(unisolatedCommunities);
 
             # Add weighted edges to Gnew
-            for (cu, cv), weight in edge_weights.items():
-                self.Gnew.add_edge(cu, cv, bathyAve=weight)
+            for (cu, cv), edge_weight in edge_weights.items():
+                self.Gnew.add_edge(cu, cv, bathyAve=edge_weight)
 
             # Apply Girvan–Newman algorithm to the simplified community graph
             communitityCnt = isolatedCommunitiesCnt + minBasinCnt
