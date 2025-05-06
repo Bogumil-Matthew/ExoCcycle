@@ -1896,7 +1896,9 @@ class BasinsEA():
             useEdgeDifference = False;
             useEdgeGravity = False;
             useLogistic = False;
-            useFittedSigmoid = True;
+            useNormPDFFittedSigmoid = False;
+            useQTGaussianSigmoid = False;
+            useQTGaussianShiftedGaussianWeightDistribution = True;
             if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
                 dataSTD   = dataEdgeDiffSTD;
                 dataRange = dataEdgeDiffRange;
@@ -1955,7 +1957,7 @@ class BasinsEA():
                 
                 # Set distance power
                 disPower = -1;
-            elif useFittedSigmoid:
+            elif useNormPDFFittedSigmoid:
                 # Import
                 from scipy.stats import norm
                 from scipy.optimize import curve_fit
@@ -2017,8 +2019,72 @@ class BasinsEA():
 
                 # Set distance power
                 disPower = -1;
-            
+            elif useQTGaussianSigmoid or useQTGaussianShiftedGaussianWeightDistribution:
+                # Create difference data to Gaussian transform
+                from sklearn.preprocessing import QuantileTransformer
+                xValues = np.append(self.dataEdgeDiffIQRFiltered, -self.dataEdgeDiffIQRFiltered)
+                qt = QuantileTransformer(n_quantiles=1000, random_state=0,  output_distribution='normal')
+                qtDiss  = qt.fit_transform(np.reshape(xValues, (len(xValues),1)))
 
+                verbose = True;
+                if verbose:
+                    # Create a set of equal space values in the data domain
+                    # These can be plotted on the gaussian domain to see the data stretching
+                    bins   = np.linspace(np.min(xValues), np.max(xValues), 20);
+                    binsqt = qt.transform(np.reshape(bins, (len(bins),1)))
+
+                    # Plot subplot
+                    fig, axes = plt.subplots(nrows=2, ncols=1);
+                    # QT distribution
+                    plt.sca(axes[0])
+                    plt.hist(qtDiss, alpha=1, bins=np.arange(-6, 6, .1), label='DataFilter', density=True)
+                    plt.vlines(x=binsqt, ymin=0, ymax=0.4, colors='r', alpha=.2)
+
+                    # Compare original vs QT 
+                    plt.sca(axes[1])
+                    hist = plt.hist(xValues, alpha=.4, bins=bins, label='DataFilter', density=True)
+                    plt.vlines(x=bins, ymin=0, ymax=np.max(hist[0]), colors='r', alpha=.2)
+                    qtxValues = qt.inverse_transform(qtDiss)
+                    plt.hist(qtxValues, alpha=.4, bins=bins, label='QT to data', density=True);
+                    
+                    plt.ylabel("UnNormalized weight")
+
+                    # Plot formatting
+                    plt.legend();
+                    plt.xlabel("Difference in Node Property");
+                    plt.show();
+                verbose = False;
+
+                # Create attribute dictionary for logistic edge weight method
+                logisticAttributes = {};
+
+                # Define some attributes for the logistic edge weight method
+                # S(property_difference=lowerbound) = S_at_lower
+                # S(property_difference=upperbound) = S_at_upper
+                S_at_lower = 0.1;
+                S_at_upper = 0.9;
+                # Note that this assumes of QT Gaussian transformed data
+                # have a stand deviation of 1. This should be approximately
+                # true if the transform is sucessful.
+                qtDissSTD = np.std(qtDiss)
+                lowerbound = qtDissSTD*1
+                upperbound = qtDissSTD*2
+
+                # Define attributes for the logistic edge weight method
+                # logisticAttributes["L"]       : Maximum value of logistic curve
+                # logisticAttributes["k"]       : Controls rate of change of curve 
+                # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                logisticAttributes["L"] = 1
+                xl = np.log( (logisticAttributes["L"]-S_at_upper)/S_at_upper )
+                xu = np.log( (logisticAttributes["L"]-S_at_lower)/S_at_lower )
+                logisticAttributes["k"] = -1*(xl-xu)/(lowerbound-upperbound)
+                logisticAttributes["shift"] = logisticAttributes["k"]*lowerbound + xl
+
+
+                # Set distance power
+                disPower = -1;
+
+                from scipy import stats
             else:
                 print("No method chosen.")
 
@@ -2131,12 +2197,51 @@ class BasinsEA():
                             # Use the logistic function to calculated the edge weight component S.
                             S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*diff+logisticAttributes["shift"]))**(-1)
 
-                        elif useFittedSigmoid:
+                        elif useNormPDFFittedSigmoid:
                             # Difference in properties at nodes
                             diff = np.abs(values1-values2)
                             # Use the pdf fitted sigmoid function
                             # to calculate the edge weight component S.
                             S = sigmoid(diff, *self.popt)
+
+                        elif useQTGaussianSigmoid:
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2);
+                            # Transform from diff-space to gaussian-space
+                            QTGdiff = qt.transform( np.reshape( np.array(diff), (1,1) ) );
+
+                            # Apply stretch factor after QTGdiff is defined with a Guassian Transformer.
+                            # This will give less weight to tail values of the distribution
+                            QTGdiffStretch = 0.1; # Decimal percentage to stretch the QTGdiff value.
+                            QTGdiff *= (1 + QTGdiffStretch);
+
+                            # Use the logistic function to calculated the edge weight component S.
+                            S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*QTGdiff+logisticAttributes["shift"]))**(-1)
+
+                        elif useQTGaussianShiftedGaussianWeightDistribution:
+                            # This method does the following to calculate weights
+                            # 1. Filter outliers from difference data (using IQR method)
+                            # 2. Convert difference data into gaussian (using QT method)
+                            # 3. Calculate z-score of difference data between nodei and nodej
+                            # 4. Given the z-score from step 3) calculate a CDF (0-1) value on a
+                            # new distribution centered at 1 sigma (from the first distribution)
+                            # and with a std of sigma/2 (from the first distribution).
+                            # 4. Define weight as S=(1-CDF) 
+
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2);
+                            # Transform from diff-space to gaussian-space
+                            QTGdiff = qt.transform( np.reshape( np.array(diff), (1,1) ) );
+                            # Get probablity in stretched distribution
+                            cdfCenter  = qtDissSTD*1
+                            cdfStretch = qtDissSTD/3
+                            CDF = stats.norm.cdf(QTGdiff, loc=cdfCenter, scale=cdfStretch)
+                            # Divide by probablity in normal distribution. This
+                            # scales probablility between 0-1.
+                            # Note that:
+                            #   S->1 for |value1 - value2|-> 0   and
+                            #   S->0 for |value1 - value2|-> inf
+                            S = (1-CDF);
 
 
                         # Note that this weight contains node spacing information
