@@ -326,7 +326,7 @@ def plotGlobal(lat, lon, values,
         # Case where pltOpts["plotZeroContour"] was not defined
         pass
 
-    ## Add contours in integer steps (usful for dividing catagorical data)
+    ## Add contours in integer steps (useful for dividing catagorical data)
     try:
         if pltOpts["plotIntegerContours"]:
             # Set any np.nan values to 0.
@@ -579,7 +579,6 @@ class eaNodes():
         return R @ from_vec
 
     def makegrid(self, plotq=0):
-
         '''
         
         Re(defined)
@@ -985,6 +984,10 @@ class eaNodes():
             A dictionary that holds the data that has been interpolated to
             the equal area nodes. self.data[name] is the added entry.
 
+        self.connectionNodeIDs : NUMPY ARRAY
+            A len(self.data) x 5 array of values with column 1 corresponding
+            to node index, and column 2-5 correspond to the first 4 closest
+            connected node indices.
         """
         # Interpolate the values to node locations
         # Note that the region R must be set to -181/181 so that 
@@ -1235,6 +1238,8 @@ class eaNodes():
 
 
             fig.show()
+
+
 def get_plotly_colorscale(cmap_name="viridis", nan_color="rgba(0,0,0,0)", n_colors=256):
     """
     Converts a Matplotlib colormap to a Plotly colorscale, adding transparency for NaN values.
@@ -1588,20 +1593,216 @@ class BasinsEA():
         self.AOC = self.nc['AOC'][:].data;
 
         # Define inputs for the class that makes equal area
-        self.EAinputs = {"resolution":np.diff(self.nc['lon'][:])[0], "dataGrid":"{}/{}".format(dataDir, filename), "parameter": "bathymetry" }
+        EAinputs = {"resolution":np.diff(self.nc['lon'][:])[0], "dataGrid":"{}/{}".format(dataDir, filename), "parameter": "bathymetry", "parameterUnit":"m", "parameterName":"bathymetry" }
 
+        # Define attribute to hold multiple scalar fields.
+        # These will be used to determine edge weights.
+        self.Fields = {};
+        self.Fields["MultipleFields"] = False;
+        self.Fields["FieldCnt"] = 1;
+        self.Fields["Field1"] = EAinputs;
+
+        # Set the fields to be used for edge weight calculations.
+        self.useFields()
 
         # Define class attributes to be redefined throughout analysis
         ## Have basin connection been defined.
         self.basinConnectionDefined = False;
         ## Have basin bathymetry parameters been defined.
         self.BasinParametersDefined = False;
+
+        # Define mask to use when interpolating from node values
+        # to evenly spaced latitude-longitude points
+        self.setFieldMask() 
         
         # Close file  
         self.nc.close();
+
+    def addField(self, resolution, dataGrid, parameter, parameterUnit, parameterName):
+        """
+        addField method is used to set a field to calculate edge weights with.
+
+        Parameters
+        -----------
+        resolution : FLOAT
+            Resolution of input data set. This value needs to be the same for all set fields.
+        dataGrid : STRING
+            Directory to netCDF4 to be used in calculations.
+        parameter : STRING
+            Name of parameter in netCDF4 to be used for edge weight calculations.
+        parameterUnit : STRING
+            Unit of parameter.
+        parameterName : STRING
+            Common name for parameter (e.g., bathymetry, PSU, Temperature, organism1)
+        
+        Re(defines)
+        ------------
+        self.Fields : DICTIONARY
+            Holds entries corresponding to fields
+
+        
+        """
+        # Define EAinputs for added field
+        EAinputs = {"resolution":resolution, "dataGrid":dataGrid, "parameter":parameter, "parameterUnit":parameterUnit, "parameterName":parameterName }
+
+        # Add dictionary entry for added field.
+        self.Fields["Field{}".format(self.Fields["FieldCnt"]+1)] = EAinputs;
+
+        # Redefine the number of used fields.
+        self.Fields["FieldCnt"] += 1;
+
+    def getFields(self, usedFields = False):
+        """
+        getFields method is used to output the information of all fields stored
+        within the BasinEA object.
+
+        Parameter
+        ----------
+        Option to only plot the fields being used in the calculation of weights
+        and communities.
+
+        Return
+        -------
+        None.
+        
+        """
+
+        if not usedFields:
+            # Show all fields in object
+            print("\nAll fields\n---------------")
+            for i in range(self.Fields["FieldCnt"]):
+                # Define field number
+                fieldNum = 1+i;
+                # Plot field information
+                print("Field{}".format(fieldNum))
+                print("\tdataGrid: {}".format(self.Fields["Field{}".format(fieldNum)]["dataGrid"]))                
+                print("\tparameter: {}".format(self.Fields["Field{}".format(fieldNum)]["parameter"]))
+                print("\tparameterUnit: {}".format(self.Fields["Field{}".format(fieldNum)]["parameterUnit"]))
+                print("\tparameterName: {}\n".format(self.Fields["Field{}".format(fieldNum)]["parameterName"]))
+        else:
+            # Show fields in object that are used for graph construction
+            # and community detection. 
+            print("\nUsed fields\n---------------")
+            for fieldNum in self.Fields["usedFields"]:
+                # Plot field information
+                print("{}".format(fieldNum))
+                print("\tdataGrid: {}".format(self.Fields[fieldNum]["dataGrid"]))                
+                print("\tparameter: {}".format(self.Fields[fieldNum]["parameter"]))
+                print("\tparameterUnit: {}".format(self.Fields[fieldNum]["parameterUnit"]))
+                print("\tparameterName: {}\n".format(self.Fields[fieldNum]["parameterName"]))
+
+
+    def useFields(self, fieldList=np.array(["Field1"])):
+        """
+        useFields method is used to define which fields will be used to
+        calculate edge weights with.
+
+        Parameters
+        -----------
+        fieldList : NUMPY LIST
+            A list of strings. The default is ["Field1"].
+
+        Re(defines)
+        ------------
+        self.Fields : DICTIONARY
+            Holds entries corresponding to fields
+        """
+
+        # Define the fields used in the calculation of edge weights.
+        self.Fields["usedFields"] = fieldList;
+
+    def setFieldMask(self, fieldMaskParameter={"usedField":None}, Field='bathymetry'):
+        '''
+        setFieldMask is a method used to set a mask for the
+        communities once they are interpolated back to an
+        equal-spaced latitude-longitude array.
+
+        Parameter
+        ----------
+        fieldMaskParameter : DICTIONARY
+            A set of parameters used to determine the field
+            mask used.
+                "usedField" : INT, None
+                    Set to None to use bathymetry map load
+                    when initiating BasinsEA class. Set to
+                    an integer 0-n to assign the values with
+                    usedFields.
+                "fliprl" : False
+                    An option to flip the input mask along
+                    longitude 0 values (prime meridian).
+                "flipud" : True
+                    An option to flip the input mask along
+                    latitude 0 values (equator).
+        usedField : INT
+            An integer value associated with the field to be
+            used for masking. Note that this argument should
+            be assigned the index of the used field vector
+            self.Fields['usedFields']
+        Field : NUMPY ARRAY
+            An array of values with np.nan corresponding to
+            values to be masked out. 
+        fliprl : BOOLEAN
+
+        flipud : BOOLEAN
+
+        Re(define)
+        -----------
+        self.maskValue : NUMPY ARRAY
+            Masked values represented with non-np.nan values.
+        '''
+
+        if Field == 'bathymetry':
+            self.maskValue = self.bathymetry;
+        else:
+            self.maskValue = Field;
+        
+        if fieldMaskParameter['usedField'] is not None:
+            # Set values
+            usedField = fieldMaskParameter['usedField']
+
+            # Input and output filenames
+            input_grid = "tempSimp_{}.nc".format( self.Fields[ self.Fields['usedFields'][usedField] ]['parameterName'] )
+            output_grid = "mask.nc"
+
+            # GMT command: resample to 1x1 degree with pixel registration
+            # -R specifies global extent (0 to 360 or -180 to 180, adjust as needed)
+            # -I1d sets 1-degree spacing
+            # -rp forces pixel registration
+            cmd = "gmt grdsample {0} -G{1} -I{2}d -rp -R-180/180/-90/90".format(input_grid,
+                                                                                output_grid,
+                                                                                self.Fields[ self.Fields['usedFields'][usedField] ]['resolution'])
+            # Execute the command
+            os.system(cmd)
+
+
+            # Read mask and set field
+            ds = Dataset("mask.nc")
+            field = ds['z'][:].data;
+            mask = np.ones( np.shape(ds['z'][:].mask) )
+            mask[ds['z'][:].mask] = np.nan
+            ds.close();
+
+            # Apply operations to field
+            if fieldMaskParameter['fliprl']:
+                mask    = np.fliplr(mask)
+                field   = np.fliplr(field);
+            if fieldMaskParameter['flipud']:
+                mask    = np.flipud(mask)
+                field   = np.flipud(field);
+                
+            # Assign mask and field to class attribute            
+            self.maskValue = mask;
+            self.bathymetry = field; # FIXME: This might not be the most appropriate way to redefine 'self.bathymetry'
+        else:
+            self.maskValue = self.bathymetry;
+
     
 
-    def simplifyNetCDF(self, inputPath="path/file1.nc", outputPath="~/file2.nc", parameter="bathymetry"):
+    def simplifyNetCDF(self,
+                       inputPath="path/file1.nc",
+                       outputPath="~/file2.nc",
+                       parameterIn="bathymetry",
+                       parameterOut="z",):
         """
         simplifyNetCDF method reads a NetCDF4 file and writes a new NetCDF4 file
         with only lat, lon, and bathymetry variables.
@@ -1614,9 +1815,13 @@ class BasinsEA():
         output_path : STRING
             Path to save the new NetCDF4 file. The default
             is "path/file2.nc"
-        parameter : STRING
-            Name of the parameter in the netCDF4 that
+        parameterIn : STRING
+            Name of parameter in the netCDF4 that
             will be copied. The default is "bathymetry".
+        parameterOut : STRING
+            Name of new parameter in the copied netCDF4.
+            This should be a standard name, so gmt netcdf
+            operations are simple. The default is "z".
         """
         # Expand the user path (~) to an absolute path
         outputPath = os.path.expanduser(outputPath)
@@ -1643,9 +1848,9 @@ class BasinsEA():
                         dst_var.setncatts({attr: var.getncattr(attr) for attr in var.ncattrs()})  # Copy attributes
 
                 # Copy bathymetry variable and rename it to 'z'
-                if parameter in src.variables:
-                    z_var = src.variables[parameter]
-                    dst_z = dst.createVariable("z", z_var.datatype, z_var.dimensions, fill_value=np.nan)
+                if parameterIn in src.variables:
+                    z_var = src.variables[parameterIn]
+                    dst_z = dst.createVariable(parameterOut, z_var.datatype, z_var.dimensions, fill_value=np.nan)
                     dst_z[:] = z_var[:]  # Copy data
                     # Copy attributes
                     for attr in z_var.ncattrs():
@@ -1657,7 +1862,1022 @@ class BasinsEA():
                                 pass
 
 
-    def defineBasins(self, minBasinCnt = 3,
+    def defineBasins(self,
+                     detectionMethod = {"method":"Louvain","resolution":1, "minBasinCnt":40, "minBasinLargerThanSmallMergers":True},
+                     edgeWeightMethod = {"method":"useLogistic"},
+                     fieldMaskParameter = {"usedField":None},
+                     reducedRes={"on":False,"factor":15},
+                     read=False,
+                     write=False,
+                     verbose=True):
+        """
+        defineBasins method will define basins with network analysis
+        using either the Girvan-Newman or Louvain algorithm to define
+        communities.
+
+        Parameter
+        ----------
+        detectionMethod : DICTIONARY
+            Determines the implemented community detection algorithm and
+            other properties to use for community detection. This dictionary
+            has the following keys:
+                method : STRING
+                    The options are "Girvan-Newman", "Louvain", or
+                    "Louvain-Girvan-Newman". The former is more
+                    robust with low scalability and the latter are
+                    practical but produces non-deterministic communities.
+                    The default is "Louvain".
+                resolution : FLOAT
+                    The resolution value to be used with the Louvain
+                    community detection algorithm. Values greater than 1,
+                    makes the algorithm favor smaller communities (more
+                    communities). Values less than 1, makes the algorithm
+                    favor larger communities (less communities). The default
+                    is 1.
+                minBasinCnt : INT
+                    The minimum amount of basins the user chooses to define
+                    for the given bathymetry model input.
+                minBasinLargerThanSmallMergers : BOOLEAN
+                    An option that requires the minBasinCnt variable to equal
+                    to the number of merged basins that are larger than the
+                    small basins merger options defined in a mergerPackage.
+        edgeWeightMethod : DICTIONARY
+            Determines the implemented edge weight scheme. Options are:
+                "useGlobalDifference"
+                    ...FIXME: add user input parameters
+                "useEdgeDifference"
+                    ...FIXME: add user input parameters
+                "useEdgeGravity"
+                    ...FIXME: add user input parameters
+                "useLogistic"
+                    Choose lower and upper bound weights 'S_at_lower',
+                    'S_at_upper' (between 0-1) and their correpsonding
+                    data field values 'factor_at_lower', 'factor_at_upper'
+                    (in units of standard deviation) that will be used
+                    to construct the logistic-like weighting curve.
+                "useNormPDFFittedSigmoid"
+                    ...FIXME: add user input parameters
+                "useQTGaussianSigmoid"
+                    ...FIXME: add user input parameters
+                "useQTGaussianShiftedGaussianWeightDistribution"
+                    Choose 'shortenFactor' and 'shiftFactor' factor (in units
+                    of standard deviation) that will be used to construct
+                    the cumulative density function for this weighting scheme.
+
+
+        reducedRes : DICTIONARY
+            Option to reduce the resolution of the basin definition
+            network calculation. Note that this should be turned
+            off when doing analysis, and only kept on for testing
+            purposes. The default is {"on":False,"factor":15}.
+        read : BOOLEAN
+            An option to read basin definitions for a given
+            bathymetry model. The default is False. 
+        write : BOOLEAN
+            An option to write basin definitions for a given
+            bathymetry model. The default is False. 
+        verbose : BOOLEAN, optional
+            Reports more information about process. The default is True.
+
+        Define
+        ----------
+        self.basinCnt : INT
+            Number of basins in global bathymetry model.
+        self.basinDis : NUMPY ARRAY
+            binCnt x basinCnt array of bathymetry distributions.
+
+
+        Structure:
+        i. Determine to create or read graph
+        Read graph
+            1. read graph
+
+
+        Create graph
+            1. Reduce resolution and flatten: bathymetry, latitude, longitude
+            2. Create EA grid of points (for interpolation): eaNodes(...)
+                - Creates Class object
+            3. Reduce resolution of EAinput data: simplifyNetCDF(...)
+                - Creates temp tempSimp.nc
+            4. Iterpolate temp file to EA grid points: eaPoint.interp2IrregularGrid(...)
+                - Replaces temp tempSimp.nc
+            5. Remove missing data from EA grid class object
+                - Updates self.eaPoint
+                - Changes: Need to make sure either 1) all data is represented each point or 2) have some locations represented with only some data  
+            6. Create dictionary holding: lat, lon, parameter, area weight
+                - Changes: can be made to hold additional parameters
+            7. Create graph and add node attributes
+                - Changes: add inner-loop for more attributes for additional fields
+            8. Create array of node differences (at node edges)
+                - Changes: add inner-loop for additional fields
+            9. Calculate statistics difference array
+                - Changes: add created attributes to self.Fields["Fieldi"]
+            10. Iterate over nodes
+                i. Iterate over node edges (defined with eaNodes object)
+                    I. Calculate and assign weight
+                        - Changes: calculate multiple weights combined them (add, subtract, product)
+
+
+        Create a class for each of the methods
+            - Initialize for variable
+                - calculate statistics, QT, logistic function, parameters, ect
+            - Method of function
+                - weight = getwWight(value1, value2)
+        
+        
+        self.Fields["MultipleFields"] = False;
+        self.Fields["FieldCnt"] = 1;
+        self.Fields["Field1"]
+        self.Fields["usedFields"]
+        
+        """
+
+        ##########################
+        ### Write/Load network ###
+        ##########################
+        if read:
+            # FIXME: Needs to be updated for EAnodes
+            ####################
+            ### Read network ###
+            ####################
+            self.G = nx.read_gml("{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), destringizer=float);
+            
+            # Only reduce resolution if option is set. Note that this must
+            # be consistent with written network
+            if not reducedRes['on']:
+                self.reducedRes = np.diff(self.lon)[0][0];
+                self.latf = self.lat.flatten();
+                self.lonf = self.lon.flatten();
+                bathymetryf = self.bathymetry.flatten();
+            else:
+                self.reducedRes = reducedRes['factor'];
+                self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
+            
+            # Define resolution
+            self.resolution = self.reducedRes*np.diff(self.lon)[0][0];
+        
+        else:
+            # Only reduce resolution if option is set. Note that this must
+            # be consistent with written network
+            if not reducedRes['on']:
+                self.reducedRes = np.diff(self.lon)[0][0];
+                self.latf = self.lat.flatten();
+                self.lonf = self.lon.flatten();
+                bathymetryf = self.bathymetry.flatten();
+            else:
+                self.reducedRes = reducedRes['factor'];
+                self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
+
+            # Readjust resolution if reduced resolution was used.
+            if reducedRes['on']:
+                for field in self.Fields['usedFields']:
+                    self.Fields[field]["resolution"] *= reducedRes['factor'];
+
+            ######################
+            ### Create network ###
+            ######################
+            # Define equal area points
+            # eaPoint.lat, eaPoint.lon are created here
+            # Note that only one eaNodes object is need for multiple fields.
+            # Use the first used field to create the object
+            self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]] );
+
+            # Creates
+            # 1) Set of nodes that represent equal area quadrangles.
+            # 2) Define the connects between all nodes (even to nodes
+            # with missing data)
+            self.eaPoint.makegrid(plotq=0);
+
+            # Loop over all used fields
+            for field in self.Fields['usedFields']:
+                # Define parameter name
+                parameter = self.Fields[field]['parameter']
+                parameterName = self.Fields[field]['parameterName']
+                parameterOut = "z";
+
+                # Simplify netCDF4 for interpolation inputPath="path/file.nc", outputPath
+                self.simplifyNetCDF(inputPath=self.Fields[field]['dataGrid'],
+                                    outputPath='tempSimp_{}.nc'.format(parameterName),
+                                    parameterIn=parameter,
+                                    parameterOut=parameterOut)
+                
+                # Interpolate from grided nodes to equal area nodes
+                # Defines self.eaPoint.data with data at equal area nodes.
+                self.eaPoint.interp2IrregularGrid(path='tempSimp_{}.nc'.format(parameterName),
+                                                  name=parameterOut)
+
+                # Assign interpolated grid and connections to dictionary entry
+                self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
+
+                # Note that connectionNodeIDs are not the same for each field (i.e., there
+                # is a dependence on where np.nan values exist within
+                # self.Fields[field]['interpolatedData'].)
+                self.Fields[field]['connectionNodeIDs'] = self.eaPoint.connectionNodeIDs
+
+            # Assign the field to be used for masking communities when converting
+            # from node spacing to equally-spaced latitude and longitude values.
+            self.setFieldMask(fieldMaskParameter=fieldMaskParameter);
+            
+            # Make a field that liberally defines nodes and connections across all fields.
+            # I.e., even if only one field has data at a node then it will be represented
+            # in all fields. 
+            # However, weighting of node connections later will only be dependent on the
+            # collection of fields that have edges between two nodes with valid data (non-NaNs).
+            #for i
+            # Loop over all used fields
+            #for field in self.Fields['usedFields']:
+            #    self.Fields['DataExist'] = 
+
+
+            ## FIXME: Current area to work on
+
+            ## Merge all fields into a single netCDF: "superImposedFields.nc"
+
+            ### Create a string
+            '''
+            ### 1. Create field that contains the NaNs structure of all the input files.
+            allFields = np.array([], dtype=str);
+            for field in self.Fields['usedFields']:
+                # Define parameter name
+                parameterName = self.Fields[field]['parameterName']
+                # Append field name to string
+                allFields = np.append( allFields,
+                                        'tempSimp_{}.nc'.format(parameterName)
+                                    )
+            #### i. Create NaN mask command: file1.nc ISNAN file2.nc ISNAN OR ...
+            nan_mask_cmd = []
+            for i, f in enumerate(allFields):
+                nan_mask_cmd.append(f"{f} ISNAN")
+                if i > 0:
+                    nan_mask_cmd.append("OR")
+            nan_mask_cmd.append("= nanmask.nc")
+            nan_mask_str = " ".join(nan_mask_cmd)
+
+            ##### ii. Create sum command: file1.nc file2.nc ADD file3.nc ADD ...
+            sum_cmd = [allFields[0]]
+            for f in allFields[1:]:
+                sum_cmd.append(f)
+                sum_cmd.append("ADD")
+            sum_cmd.append("= summed.nc")
+            sum_cmd_str = " ".join(sum_cmd)
+
+            ##### iii. Use gmt grdmath to create nanmask.nc
+            os.system("gmt grdmath {}".format(nan_mask_str))
+            print("gmt grdmath {}".format(nan_mask_str))
+            #os.system("gmt grdmath{}".format(sum_cmd_str))
+            #gmt grdmath summed.nc nanmask.nc NAN = output.nc
+
+            ##### iv. 
+            # Interpolate from grided nodes to equal area nodes
+            # Defines self.eaPoint.data with data at equal area nodes.
+            self.eaPoint.interp2IrregularGrid(path='nanmask.nc',
+                                                name='z')
+            '''
+
+            # Assign interpolated grid and connections to dictionary entry
+            #self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
+
+            ## Run the interp2IrregularGrid method for eaPoints to get connectionNodeIDs
+            # Note that connectionNodeIDs are not the same for each field (i.e., there
+            # is a dependence on where np.nan values exist within
+            # self.Fields[field]['interpolatedData'].)
+            #self.connectionNodeIDs = self.eaPoint.connectionNodeIDs
+
+
+            
+            #self.Fields["MultipleFields"] = False;
+            #self.Fields["FieldCnt"] = 1;
+            #self.Fields["Field1"]
+            # "resolution":
+            # "dataGrid":"{}/{}".format(dataDir, filename)
+            # "parameter": "bathymetry"
+            # "parameterUnit":"m"
+            # "parameterName":"bathymetry"
+            #self.Fields["usedFields"]
+
+            # Iterate over all fields and liberally select all nodes + connections 
+            # Any missing values values. Where one field is represented, but the
+            # other is not will be replaced with np.nan values. These values will
+            # be dealt with in the later weight calculation.
+            # 
+            # Make logical to define which nodes represent at least 1 data-field.
+            firstField = True;
+            for field in self.Fields['usedFields']:
+                # First assign a base field to expand with other fields
+                if firstField:
+                    logicalFields = ~np.isnan(self.Fields[field]['interpolatedData'])
+                    firstField = False;
+                else:
+                    logicalFields = ( logicalFields | ~np.isnan(self.Fields[field]['interpolatedData']) )
+            
+            # Area covered by a node m2. FIXME: might be able to define outside of field-loop.
+            self.areaWeighti = (4*np.pi*(self.radius)**2)/len(self.eaPoint.data[parameterOut]);
+
+            # Remove points with no data at any of the fields
+            allNodes = False;
+            if not allNodes:
+                self.eaPoint.ealat = self.eaPoint.ealat[logicalFields];
+                self.eaPoint.ealon = self.eaPoint.ealon[logicalFields];
+                self.eaPoint.connectionNodeIDs = self.eaPoint.connectionNodeIDs[logicalFields]
+                for field in self.Fields['usedFields']:
+                    self.Fields[field]['interpolatedData'] = self.Fields[field]['interpolatedData'][logicalFields];
+            
+            # Define counter and point dictionary
+            cnt = 0.
+            points = {};
+            # Create dictionary and array of bathymetry points
+            pos = np.zeros( (2, len(~np.isnan(self.Fields[field]['interpolatedData']))) );
+            for i in tqdm( range(len(self.eaPoint.ealon)) ):
+                # Create list of values to store in nodes: 
+                nodeAttributes = list([self.eaPoint.ealat[i], self.eaPoint.ealon[i], self.areaWeighti]);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                # Add field properties: (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                for field in self.Fields['usedFields']:
+                    nodeAttributes.append(self.Fields[field]['interpolatedData'][i])
+
+                #if (~np.isnan(bathymetryi)):
+                points[int(cnt)] = tuple(nodeAttributes);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                pos[:,int(cnt)] = np.array( [self.eaPoint.ealat[i], self.eaPoint.ealon[i]] ); 
+                # Iterate node counter
+                cnt+=1;
+
+            # Calculate the starting index of fields stored in nodes
+            startOfFieldIdx = len(nodeAttributes)-len(self.Fields['usedFields']);
+
+            # Create a graph
+            G = nx.Graph()
+
+            ## Add nodes (points)
+            for node, values in points.items():
+                #if not np.isnan(values[2]):
+                G.add_node(node, pos=values[0:2], areaWeightm2=values[2]);
+                # Add field attributes
+                cnt = 0;
+                for field in self.Fields['usedFields']:
+                    G.nodes[node][field] = values[startOfFieldIdx+cnt]
+                    cnt+=1;
+
+            
+            ## Create a list of property difference between connected nodes
+            ### Assign and empty vector to self.dataEdgeDiff 
+            for field in self.Fields['usedFields']:
+                self.Fields[field]['dataEdgeDiff'] = np.array([], dtype=np.float64)
+
+            ### Iterate through each node to add edges
+            nodeCnt=0;
+            for i in tqdm(np.arange(len(pos[0,:]))):
+                # Iterate over all nodes
+
+                # Assign all field values to values1 (evalued node)
+                valuesNode = points[int(nodeCnt)][startOfFieldIdx:];
+                #coordsNode = G.nodes[node1]['pos'];
+                
+                # Get connection node ids
+                connections = self.eaPoint.connectionNodeIDs[i,1:]
+
+                for connection in connections:
+                    # Iterate over connections
+                    if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
+                        # Connection found between value1 and value2. This would not happen
+                        # if the connection was to a node over land.
+                        idxConnected = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
+                        nodeConnected = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idxConnected)[0][0]
+
+                        # Assign all field values to values2 (connected node)
+                        valuesConnected = points[int(nodeConnected)][startOfFieldIdx:];
+
+                        # Assign difference to dataEdgeDiff vector
+                        cnt=0;
+                        for field in self.Fields['usedFields']:
+                            self.Fields[field]['dataEdgeDiff'] = np.append(self.Fields[field]['dataEdgeDiff'], np.abs(valuesNode[cnt]-valuesConnected[cnt]))
+                            cnt+=1;
+
+                # Iterate node counter
+                nodeCnt+=1;
+            
+            ## Remove outliers from self.dataEdgeDiff and calculate std
+            def remove_outliers_iqr(data):
+                """
+                remove_outliers_iqr function removes outliers from 
+                a Numpy array using the IQR method.
+
+                Parameters
+                -----------
+                data : NUMPY ARRAY
+                    The input NumPy array.
+
+                Returns
+                --------
+                filtered_data : NUMPY ARRAY
+                    A new NumPy array with outliers removed.
+                """
+                q1 = np.nanpercentile(data, 25)
+                q3 = np.nanpercentile(data, 75)
+                iqr = q3 - q1
+                lower_bound = q1 - 1.5 * iqr
+                upper_bound = q3 + 1.5 * iqr
+                filtered_data = data[(data >= lower_bound) & (data <= upper_bound)]
+                return filtered_data
+
+            for field in self.Fields['usedFields']:
+                ### Get outliers filtered dataEdgeDiff using the IQR method.
+                self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr(self.Fields[field]['dataEdgeDiff']);
+
+                ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
+                ## This is appropriate since each edge is bidirectional.
+                ## As a result, the mean should be zero.
+                self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered']) );
+
+                ## Define dataRange with dataEdgeDiffIQRFiltered
+                self.Fields[field]['dataEdgeDiffRange'] = np.max(self.Fields[field]['dataEdgeDiffIQRFiltered']) - np.min(self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                 
+                ## Define a dictionary to hold the weight parameters
+                self.Fields[field]['weightMethodPara'] = {};
+
+                ## Set lower bound for difference value to influence connectivity
+                ## Assuming a normal distribution
+                ## factor = 5: Strength in node connection changes over 84% data with greater variation than the 16% with the lowest variation.
+                ## factor = 4: Strength in node connection changes over 80% data with greater variation than the 20% with the lowest variation.
+                ## factor = 3: Strength in node connection changes over 74% data with greater variation than the 26% with the lowest variation.
+                ## factor = 2: Strength in node connection changes over 57% data with greater variation than the 38% with the lowest variation.
+                ## factor = 1: Strength in node connection changes over 0% data with greater variation than the 68% with the lowest variation.
+                factor = 2;
+                #lowerbound = dataEdgeDiffSTD/factor;
+                self.Fields[field]['weightMethodPara']['lowerbound'] = 0;
+                self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor;
+
+                ## Define the std and dataRange to be used in the following calculations of edge weights.
+                useGlobalDifference = False;
+                useEdgeDifference = False;
+                useEdgeGravity = False;
+                useLogistic = False;
+                useNormPDFFittedSigmoid = False;
+                useQTGaussianSigmoid = False;
+                useQTGaussianShiftedGaussianWeightDistribution = True;
+
+                if edgeWeightMethod['method'] == "useGlobalDifference":
+                    # Set method
+                    useGlobalDifference = True
+                elif edgeWeightMethod['method'] == "useEdgeDifference":
+                    # Set method
+                    useEdgeDifference = True;
+                elif edgeWeightMethod['method'] == "useEdgeGravity":
+                    # Set method
+                    useEdgeGravity=True;
+                elif edgeWeightMethod['method'] == "useLogistic":
+                    # Set method
+                    useLogistic = True;
+
+                    # Set method parameters - if not user defined
+                    if not (np.array(list(edgeWeightMethod.keys())) == "S_at_lower").any():
+                        self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
+                    if not (np.array(list(edgeWeightMethod.keys())) == "S_at_upper").any():
+                        self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
+                    if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_lower").any():
+                        self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*1
+                    else:
+                        self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_lower']
+                    if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_upper").any():
+                        self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*2
+                    else:
+                        self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_upper']
+
+                elif edgeWeightMethod['method'] == "useNormPDFFittedSigmoid":
+                    # Set method
+                    useNormPDFFittedSigmoid = True;
+                elif edgeWeightMethod['method'] == "useQTGaussianSigmoid":
+                    # Set method
+                    useQTGaussianSigmoid = True;
+                elif edgeWeightMethod['method'] == "useQTGaussianShiftedGaussianWeightDistribution":
+                    # Set method
+                    useQTGaussianShiftedGaussianWeightDistribution = True;
+
+                    # Set method parameters - if not user defined
+                    ## The factor of standard deviations to shorten the CDF distribution by.
+                    if not (np.array(list(edgeWeightMethod.keys())) == "shortenFactor").any():
+                        edgeWeightMethod['shortenFactor'] = 3;
+                    ## The factor of standard deviations to shift the CDF distribution by.
+                    if not (np.array(list(edgeWeightMethod.keys())) == "shiftFactor").any():
+                        edgeWeightMethod['shiftFactor'] = 1;
+                    ## The minimum value used for edge weights
+                    if not (np.array(list(edgeWeightMethod.keys())) == "minWeight").any():
+                        edgeWeightMethod['minWeight'] = 0.01;
+
+                if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
+                    self.Fields[field]['weightMethodPara']['dataSTD']   = self.Fields[field]['dataEdgeDiffSTD'];
+                    self.Fields[field]['weightMethodPara']['dataRange'] = self.Fields[field]['dataEdgeDiffRange'];
+                    ## Define the weight (S) at the upper bound of values1-values2 difference
+                    self.Fields[field]['weightMethodPara']['S_at_upperbound'] = .05
+
+                    ## Calculate the stretch factor for the exponential decay, such that
+                    ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                    self.Fields[field]['weightMethodPara']['stretchEdgeDifference'] = (self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])/np.log(self.Fields[field]['weightMethodPara']['S_at_upperbound'])/self.Fields[field]['weightMethodPara']['dataSTD']
+
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                elif useGlobalDifference and not (useEdgeDifference or useEdgeGravity):
+                    ## Define the range of input node edge values
+                    self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
+
+                    ## Define the std of the input node edge values. Node should be
+                    ## representing equal area, so no weights for the std need to be defined.
+                    self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
+
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                elif useEdgeGravity and not (useEdgeDifference or useGlobalDifference):
+                    ## Define the range of input node edge values
+                    self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
+
+                    ## Define the std of the input node edge values. Node should be
+                    ## representing equal area, so no weights for the std need to be defined.
+                    self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
+
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -2;
+
+                elif useLogistic:
+                    # Create attribute dictionary for logistic edge weight method
+                    self.Fields[field]['weightMethodPara']['logisticAttributes'] = {};
+
+                    # Define some attributes for the logistic edge weight method
+                    # S(property_difference=lowerbound) = S_at_lower
+                    # S(property_difference=upperbound) = S_at_upper
+                    self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
+                    self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
+                    self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']
+                    self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor
+
+                    # Define attributes for the logistic edge weight method
+                    # logisticAttributes["L"]       : Maximum value of logistic curve
+                    # logisticAttributes["k"]       : Controls rate of change of curve 
+                    # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                    self.Fields[field]['weightMethodPara']['logisticAttributes']["L"] = 1
+                    
+                    xl = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_upper'])/self.Fields[field]['weightMethodPara']['S_at_upper'] )
+                    xu = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_lower'])/self.Fields[field]['weightMethodPara']['S_at_lower'] )
+                    self.Fields[field]['weightMethodPara']['logisticAttributes']["k"] = -1*(xl-xu)/(self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])
+                    self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"] = self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*self.Fields[field]['weightMethodPara']['lowerbound'] + xl
+                    
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+                    
+                elif useNormPDFFittedSigmoid:
+                    # Import
+                    from scipy.stats import norm
+                    from scipy.optimize import curve_fit
+
+                    # Define sigmoid function for fitting
+                    def sigmoid(x, L, k, s):
+                        '''
+                        
+                        '''
+                        y = -L / (1 + np.exp(-k*np.abs(x)+s))
+                        return y
+
+                    # Calculate the PDF with data mirror at zero. Mirroring is
+                    # done since dataEdgeDiffIQRFiltered is constructed as
+                    # np.abs(value1-value2).
+                    self.Fields[field]['weightMethodPara']['pdf'] = \
+                        norm.pdf(np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
+                                          -self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                                0,
+                                self.Fields[field]['dataEdgeDiffSTD'])
+
+                    ## Initial guess for parameters
+                    ## These need to be automatically chosen in an appropriate way: FIXME
+                    self.Fields[field]['weightMethodPara']['p0'] = \
+                        [max(self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                        self.Fields[field]['dataEdgeDiffSTD'],
+                        self.Fields[field]['dataEdgeDiffSTD']]
+
+                    ## Fit the curve for data mirror at zero. Mirroring is
+                    # done since the pdf is constructed with mirrored
+                    # data.
+                    self.Fields[field]['weightMethodPara']['popt'], self.Fields[field]['weightMethodPara']['pcov'] = \
+                        curve_fit(sigmoid,
+                                  np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
+                                            -self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                                  self.Fields[field]['weightMethodPara']['pdf'],
+                                  self.Fields[field]['weightMethodPara']['p0'],
+                                  method='trf')
+                    
+                    verbose = True;
+                    if verbose:
+                        xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                        # Plot subplot
+                        fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True);
+                        # Compare pdf w/ sigmoid function 
+                        plt.sca(axes[0])
+                        plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf']/np.max(self.Fields[field]['weightMethodPara']['pdf']), 'b.', alpha=1, label='pdf');
+                        plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt'])/sigmoid(0, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
+                        plt.ylabel("Normalized weight")
+
+                        # Compare pdf, sigmoid, and original distribution of values
+                        plt.sca(axes[1])
+                        plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf'], 'b.', alpha=1, label='pdf');
+                        plt.hist(xValues, alpha=.4, bins=np.linspace(np.min(xValues), np.max(xValues), 30), label='Data', density=True);
+                        plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
+                        plt.ylabel("UnNormalized weight")
+                        
+                        # Plot formatting
+                        plt.legend();
+                        plt.xminBasinCntlabel("Difference in Node Property");
+                        plt.show();
+                    verbose = False;
+
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                elif useQTGaussianSigmoid or useQTGaussianShiftedGaussianWeightDistribution:
+                    # Create difference data to Gaussian transform
+                    from sklearn.preprocessing import QuantileTransformer
+                    
+                    xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                    self.Fields[field]['weightMethodPara']['qt'] = \
+                        QuantileTransformer(n_quantiles=1000,
+                                            random_state=0,
+                                            output_distribution='normal')
+                    qtDiss  = self.Fields[field]['weightMethodPara']['qt'].fit_transform(np.reshape(xValues, (len(xValues),1)))
+
+                    verbose = True;
+                    if verbose:
+                        # Create a set of equal space values in the data domain
+                        # These can be plotted on the gaussian domain to see the data stretching
+                        bins   = np.linspace(np.min(xValues), np.max(xValues), 20);
+                        binsqt = self.Fields[field]['weightMethodPara']['qt'].transform(np.reshape(bins, (len(bins),1)))
+
+                        # Plot subplot
+                        fig, axes = plt.subplots(nrows=2, ncols=1);
+                        # QT distribution
+                        plt.sca(axes[0])
+                        plt.hist(qtDiss, alpha=1, bins=np.arange(-6, 6, .1), label='DataFilter', density=True)
+                        plt.vlines(x=binsqt, ymin=0, ymax=0.4, colors='r', alpha=.2)
+
+                        # Compare original vs QT 
+                        plt.sca(axes[1])
+                        hist = plt.hist(xValues, alpha=.4, bins=bins, label='DataFilter', density=True)
+                        plt.vlines(x=bins, ymin=0, ymax=np.max(hist[0]), colors='r', alpha=.2)
+                        qtxValues = self.Fields[field]['weightMethodPara']['qt'].inverse_transform(qtDiss)
+                        plt.hist(qtxValues, alpha=.4, bins=bins, label='QT to data', density=True);
+                        
+                        plt.ylabel("UnNormalized weight")
+
+                        # Plot formatting
+                        plt.legend();
+                        plt.xlabel("Difference in Node Property");
+                        plt.show();
+                    verbose = False;
+
+                    # Create attribute dictionary for logistic edge weight method
+                    logisticAttributes = {};
+
+                    # Define some attributes for the logistic edge weight method
+                    # S(property_difference=lowerbound) = S_at_lower
+                    # S(property_difference=upperbound) = S_at_upper
+                    S_at_lower = 0.1;
+                    S_at_upper = 0.9;
+                    # Note that this assumes of QT Gaussian transformed data
+                    # have a stand deviation of 1. This should be approximately
+                    # true if the transform is sucessful.
+                    self.Fields[field]['weightMethodPara']['qtDissSTD'] = np.std(qtDiss)
+                    #lowerbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*1
+                    #upperbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*2
+
+                    # Define attributes for the logistic edge weight method
+                    # logisticAttributes["L"]       : Maximum value of logistic curve
+                    # logisticAttributes["k"]       : Controls rate of change of curve 
+                    # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                    #logisticAttributes["L"] = 1
+                    #xl = np.log( (logisticAttributes["L"]-S_at_upper)/S_at_upper )
+                    #xu = np.log( (logisticAttributes["L"]-S_at_lower)/S_at_lower )
+                    #logisticAttributes["k"] = -1*(xl-xu)/(lowerbound-upperbound)
+                    #logisticAttributes["shift"] = logisticAttributes["k"]*lowerbound + xl
+
+                    # Set distance power
+                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                    # Imports
+                    from scipy import stats
+
+                else:
+                    print("No method chosen.")
+
+            ## Iterate through each node to add edges
+            node1=0;
+            for i in tqdm(np.arange(len(pos[0,:]))):
+                # Iterate over all nodes
+
+                # Assign bathymetryi 
+                values1 = points[int(node1)][startOfFieldIdx:];
+                coords1 = G.nodes[node1]['pos'];
+                
+                # Get connection node ids
+                connections = self.eaPoint.connectionNodeIDs[i,1:]
+
+                for connection in connections:
+                    # Iterate over connections
+
+                    if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
+                        # Connection found between value1 and value2. This would not happen
+                        # if the connection was to a node over land.
+                        idx2 = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
+                        node2 = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idx2)[0][0]
+
+                        # Assign bathymetryj
+                        values2 = points[int(node2)][startOfFieldIdx:];
+
+
+                        if useGlobalDifference:
+                            # FIXME: Update for multiple fields
+                            # Determine average property (e.g., bathymetry) between two nodes.
+                            # propertyAve= (values1+values2)/2;
+                            # Determine the minimum property (e.g., bathymetry) between two nodes.
+                            # propertyMin= np.min(np.array([values1, values2]))
+                            # Determine the absolute value of the inverse difference between two
+                            # node properties. Set propertyInv to range of global data for values
+                            # that are the same. Then normalize by the range 
+                            SInv = 1/np.abs((values1-values2))
+                            if np.isinf(SInv):
+                                SInv = 1;
+
+                            # Determine Exponential decaying property weight between two
+                            stretch = .2
+                            SExp = ( np.exp( (np.abs(dataRange) - np.abs(values1-values2))/(stretch*dataSTD) ) ) / np.exp( (np.abs(dataRange)/(stretch*dataSTD) ) )
+
+                            # Calculate parabolic relationship for weight (AijExp and AijExpdata)
+                            ## BreakPoint for exp-parabolic relationship change
+                            breakPointWeight = stretch; # should be set to where curves are equal
+                            breakPointWeight = 1
+                            breakPointDiff = (dataRange - (stretch*dataSTD)*np.log(breakPointWeight*np.exp(dataRange/(stretch*dataSTD))) )
+
+                            ## Recalse Inverse weight 
+                            if not (breakPointWeight == 1):
+                                SInv     = SInv    * (breakPointWeight*breakPointDiff)
+
+                            ## Use inverse weight if difference in values are large.
+                            if SExp<breakPointWeight:
+                                S = SInv;
+                            elif SExp>=breakPointWeight:
+                                S = SExp;
+
+                            # Note that setting the breakPointWeight to the following values
+                            # has the following affect
+                            #
+                            # breakPointWeight = 0       --> Uses only Exponential relationship
+                            # breakPointWeight > 1       --> Uses only Inverse relationship
+                            # 0 < breakPointWeight < 1   --> Uses both Exponential & Inverse relationship. Used relationship depends on how similar properties are.
+                        elif useEdgeDifference:
+                            # FIXME: Update for multiple fields
+                            ## Define the upper and lower bound of the property difference (np.abs(values1-values2))
+                            ## for an exponentially decaying of weight is calculated.
+                            ## Value is calculated above.
+                            # lowerbound = dataEdgeDiffSTD*factor;
+                            # upperbound = dataEdgeDiffSTD/factor;
+                            
+                            ## Define the weight (S) at the upper bound of values1-values2 difference
+                            ## Value is set above.
+                            # S_at_upperbound = .1
+
+                            ## Calculate the stretch factor for the exponential decay, such that
+                            ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                            ## Value is calculated above.
+                            # stretchEdgeDifference = (lowerbound-upperbound)/np.log(S_at_upperbound)/dataSTD
+
+                            ## Calculate the weight 
+                            S  = ( np.exp( (np.abs(dataRange) - (0+np.abs(values1-values2)))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## If value is within lowerbound distance then set connection strength to a value that
+                            ## normalizes to 1.
+                            if np.abs(values1-values2)<=lowerbound:
+                                S = np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## Normalize weights to weight value at lowerbound
+                            S /= np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                            ## Set minimum S value to S_at_upperbound
+                            if S < S_at_upperbound:
+                                S = S_at_upperbound;
+
+                        elif useEdgeGravity:
+                            # FIXME: Update for multiple fields
+                            # Note that the gravity model represents node edges weights
+                            # with (property1*property2)/(distanceV**2).
+
+                            # Calculate the product of the property weights:
+                            # The inverse distance squared is added with the
+                            # later calculated nodeSpacingNormalizer.
+                            S = values1*values2;
+
+                        elif useLogistic:
+
+                            # Create an array to hold edge weights for each input field
+                            Ss = np.ones(len(values1));
+                            Ss[:] = np.nan;
+
+                            # Iterate over all the data fields stored within nodes
+                            cnt=0
+                            for value1, value2 in zip(values1, values2):
+                                if np.isnan(value1) | np.isnan(value2):
+                                    # If current node or connecting node do not have a data field value
+                                    # (i.e. don't have a connecting edge).
+                                    cnt+=1
+                                    continue
+                                else:
+                                    # If current node or connecting node both have a data field value
+                                    # (i.e. have a connecting edge).
+                                    
+                                    # Define current working field
+                                    field = self.Fields["usedFields"][cnt];
+
+                                    # Difference in properties at nodes
+                                    diff = np.abs(value1-value2)
+
+                                    # Use the logistic function to calculated the edge weight component S.
+                                    Ss[cnt] = self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]*(1+np.exp(-self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*diff+self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"]))**(-1)
+
+                                    # Move data field index
+                                    cnt+=1
+
+                            # Take the product of all fields
+                            #S = np.nanprod(Ss)
+
+                            # Take the max of all fields
+                            #S = np.nanmin(Ss)
+
+                            # Take the min of all fields
+                            #S = np.nanmax(Ss)
+
+                            # Take the mean of all fields
+                            S = np.nanmean(Ss)
+
+
+                        elif useNormPDFFittedSigmoid:
+                            # FIXME: Update for multiple fields
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2)
+                            # Use the pdf fitted sigmoid function
+                            # to calculate the edge weight component S.
+                            S = sigmoid(diff, *self.popt)
+
+                        elif useQTGaussianSigmoid:
+                            # FIXME: Update for multiple fields
+                            # Difference in properties at nodes
+                            diff = np.abs(values1-values2);
+                            # Transform from diff-space to gaussian-space
+                            QTGdiff = qt.transform( np.reshape( np.array(diff), (1,1) ) );
+
+                            # Apply stretch factor after QTGdiff is defined with a Guassian Transformer.
+                            # This will give less weight to tail values of the distribution
+                            QTGdiffStretch = 0.1; # Decimal percentage to stretch the QTGdiff value.
+                            QTGdiff *= (1 + QTGdiffStretch);
+
+                            # Use the logistic function to calculated the edge weight component S.
+                            S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*QTGdiff+logisticAttributes["shift"]))**(-1)
+
+                        elif useQTGaussianShiftedGaussianWeightDistribution:
+                            # This method does the following to calculate weights
+                            # 1. Filter outliers from difference data (using IQR method)
+                            # 2. Convert difference data into gaussian (using QT method)
+                            # 3. Calculate z-score of difference data between nodei and nodej
+                            # 4. Given the z-score from step 3) calculate a CDF (0-1) value on a
+                            # new distribution centered at 1 sigma (from the first distribution)
+                            # and with a std of sigma/2 (from the first distribution).
+                            # 4. Define weight as S=(1-CDF) 
+
+
+                            # Create an array to hold edge weights for each input field 
+                            Ss = np.ones(len(values1));
+                            Ss[:] = np.nan;
+
+                            # Iterate over all the data fields stored within nodes
+                            cnt=0
+                            for value1, value2 in zip(values1, values2):
+                                if np.isnan(value1) | np.isnan(value2):
+                                    # If current node or connecting node do not have a data field value
+                                    # (i.e. don't have a connecting edge).
+                                    cnt+=1
+                                    continue
+                                else:
+                                    # If current node or connecting node both have a data field value
+                                    # (i.e. have a connecting edge).
+
+                                    # The factor of standard deviations to shorten the CDF distribution by.
+                                    shortenFactor = edgeWeightMethod['shortenFactor']
+                                    # The factor of standard deviations to shift the CDF distribution by.
+                                    shiftFactor = edgeWeightMethod['shiftFactor']
+
+                                    # Difference in properties at nodes
+                                    diff = np.abs(value1-value2);
+                                    # Transform from diff-space to gaussian-space
+                                    QTGdiff = self.Fields[field]['weightMethodPara']['qt'].transform( np.reshape( np.array(diff), (1,1) ) );
+                                    # Get probablity in stretched distribution
+                                    cdfCenter  = self.Fields[field]['weightMethodPara']['qtDissSTD']*shiftFactor
+                                    cdfStretch = self.Fields[field]['weightMethodPara']['qtDissSTD']/shortenFactor
+                                    CDF = stats.norm.cdf(QTGdiff, loc=cdfCenter, scale=cdfStretch)
+                                    # Divide by probablity in normal distribution. This
+                                    # scales probablility between 0-1.
+                                    # Note that:
+                                    #   S->1 for |value1 - value2|-> 0   and
+                                    #   S->0 for |value1 - value2|-> inf
+                                    Ss[cnt] = ( (1-CDF) + edgeWeightMethod['minWeight'] )/(edgeWeightMethod['minWeight']+1);
+
+                                    # Move data field index
+                                    cnt+=1
+
+                            # Take the product of all fields
+                            #S = np.nanprod(Ss)
+
+                            # Take the max of all fields
+                            #S = np.nanmin(Ss)
+
+                            # Take the min of all fields
+                            #S = np.nanmax(Ss)
+
+                            # Take the mean of all fields
+                            S = np.nanmean(Ss)
+
+                        # Note that this weight contains node spacing information
+                        # (i.e., change in node density with latitude and increased \
+                        # strength in with high latitude... )
+                        coords2 = G.nodes[node2]['pos'];
+                        distanceV = haversine_distance(coords1[0], coords1[1],
+                                                       coords2[0], coords2[1],
+                                                       1);
+                        nodeSpacingNormalizer = distanceV**self.Fields[field]['weightMethodPara']['disPower'];
+                        
+
+                        # Set edge
+                        G.add_edge(node1, node2, bathyAve=S*nodeSpacingNormalizer);
+
+                # Iterate node counter
+                node1+=1;
+                
+            # Set some class parameters for testing purposes.
+            self.G = G;
+
+            # Look through all nodes and check for more than 4 connections
+            if verbose:
+                nodes = [self.G.degree[i] for i in range(len(self.G.degree))]
+                edgeNode3 = np.argwhere(np.array(nodes)<4).T[0]
+                edgeNode5 = np.argwhere(np.array(nodes)>4).T[0]
+                print(edgeNode3, "nodes have only 3 edges shared with other nodes. This should occur for 8 nodes.")
+                print(edgeNode5, "nodes have 5 edges shared with other nodes. This should not occur for any nodes.")
+                del nodes, edgeNode5, edgeNode3
+
+
+            # Find communities of nodes using the Girvan-Newman algorithm
+            self.findCommunities(detectionMethod = detectionMethod,
+                                 method = detectionMethod["method"],
+                                 minBasinCnt = detectionMethod['minBasinCnt'],
+                                 minBasinLargerThanSmallMergers = detectionMethod['minBasinLargerThanSmallMergers'],
+                                 resolution = detectionMethod["resolution"]);
+
+            ###########################
+            ### Write network Model ###
+            ###########################
+            # Write network
+            if write:
+                nx.write_gml(G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
+            
+
+            ################
+            ### Plotting ###
+            ################
+            if verbose:
+                # Plot the network on a geographic map
+                fig, ax = plt.subplots(figsize=(10, 5), subplot_kw={'projection': ccrs.PlateCarree()})
+
+                # Draw the nodes (points) on the map
+                for node, data in G.nodes(data=True):
+                    ax.plot(data['pos'][1], data['pos'][0], 'bo', markersize=1)  # longitude, latitude
+
+                # Draw the edges (connections)
+                for edge in G.edges(data=True):
+                    node1, node2, weight = edge
+                    lon1, lat1 = G.nodes[node1]['pos'][1], G.nodes[node1]['pos'][0]
+                    lon2, lat2 = G.nodes[node2]['pos'][1], G.nodes[node2]['pos'][0]
+                    ax.plot([lon1, lon2], [lat1, lat2], 'k-', transform=ccrs.PlateCarree())
+
+                # Add coastlines and gridlines
+                if "Earth" in self.filename:
+                    ax.coastlines()
+                ax.gridlines()
+
+                plt.title("Geographic Network of points")
+                plt.show()
+
+
+            ################
+            ### Plotting ###
+            ################
+
+    def defineBasinsSingleField(self, minBasinCnt = 3,
                      detectionMethod = {"method":"Louvain", "resolution":1},
                      reducedRes={"on":False,"factor":15},
                      read=False,
@@ -1711,11 +2931,6 @@ class BasinsEA():
         self.basinDis : NUMPY ARRAY
             binCnt x basinCnt array of bathymetry distributions.
         
-            
-        FIXME: NEED TO MAKE SURE reduceRes and resolution are interacting
-        properly and not only for 1 degree resolution input bathymetry
-        models.
-
         """
 
         ##########################
@@ -1766,10 +2981,18 @@ class BasinsEA():
             if reducedRes['on']:
                 self.EAinputs["resolution"] *= reducedRes['factor'];
             self.eaPoint = eaNodes(inputs=self.EAinputs);
+
+            # Creates
+            # 1) Set of nodes that represent equal area quadrangles.
+            # 2) Define the connects between all nodes (even to nodes
+            # with missing data)
             self.eaPoint.makegrid(plotq=0);
 
             # Simple netCDF4 for interpolation inputPath="path/file.nc", outputPath
-            self.simplifyNetCDF(inputPath=self.EAinputs['dataGrid'], outputPath='tempSimp.nc', parameter=self.EAinputs['parameter'])
+            self.simplifyNetCDF(inputPath=self.EAinputs['dataGrid'],
+                                outputPath='tempSimp.nc',
+                                parameterIn=self.EAinputs['parameter'],
+                                parameterOut=self.EAinputs['parameter'])
 
             # Interpolate from grided nodes to equal area nodes
             self.eaPoint.interp2IrregularGrid(path='tempSimp.nc',name='depth')
@@ -2395,8 +3618,9 @@ class BasinsEA():
                 array[i,j] = int(dataIrregular[np.argwhere(np.nanmin(x) == x)[0][0], 2])
 
         ## Apply the mask
+
         if mask:
-            array[np.isnan(self.bathymetry)] = np.nan
+            array[np.isnan(self.maskValue)] = np.nan
 
         
         self.BasinIDA = array;
@@ -2826,7 +4050,12 @@ class BasinsEA():
                 plt.title("Geographic Network of points")
                 plt.show()
 
-    def findCommunities(self, method = "Louvain", minBasinCnt=1, resolution=1):
+    def findCommunities(self,
+                        detectionMethod,
+                        method = "Louvain",
+                        minBasinCnt=1,
+                        minBasinLargerThanSmallMergers=False,
+                        resolution=1):
         """
         findCommunities uses the Girvan-Newman or Louvain community
         detection algorithm to determine communities of nodes (basins).
@@ -2835,6 +4064,8 @@ class BasinsEA():
         
         Parameter
         ----------
+        detectionMethod : DICTIONARY
+            A dictionary of defined detection methods.
         method : STRING
             Determines the implemented community detection algorithm.
             The options are either Girvan-Newman or Louvain. The former
@@ -2844,6 +4075,10 @@ class BasinsEA():
         minBasinCnt : INT
             The minimum amount of basins the user chooses to define
             for the given bathymetry model input.
+        minBasinLargerThanSmallMergers : BOOLEAN
+            An option that requires the minBasinCnt variable to equal
+            to the number of merged basins that are larger than the
+            small basins merger options defined in a mergerPackage.
         resolution : FLOAT
             The resolution value to be used with the Louvain community
             detection algorithm. Values greater than 1, makes the algorithm
@@ -2908,7 +4143,8 @@ class BasinsEA():
 
             ## Run Louvain community detection
             Lcommunities = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=resolution, threshold=1e-12, seed=1)
-            self.Lcommunities = Lcommunities
+            self.Lcommunities = cp.deepcopy(Lcommunities)
+            self.LcommunitiesUnaltered = cp.deepcopy(Lcommunities);
 
             ## Mapping from node to community index from Louvain community detection
             node_to_comm = {}
@@ -2927,38 +4163,85 @@ class BasinsEA():
             edge_weights = defaultdict(float)
 
             # Track unisolated louvain communities (communities that connect to other communities).
-            unisolatedCommunities = np.array([])
+            unisolatedCommunities = np.array([]);
+            smallCommunities = np.array([]);
+            if not minBasinLargerThanSmallMergers:
+                # Iterate over all edges in the original graph
+                for u, v, data in self.G.edges(data=True):
+                    cu = node_to_comm[u]
+                    cv = node_to_comm[v]
+                    weight = data.get('bathyAve', 1.0)
 
-            # Iterate over all edges in the original graph
-            for u, v, data in self.G.edges(data=True):
-                cu = node_to_comm[u]
-                cv = node_to_comm[v]
-                weight = data.get('bathyAve', 1.0)
+                    if cu != cv:
+                        # Undirected: sort community pair to avoid duplicates
+                        edge = tuple(sorted((cu, cv)))
+                        edge_weights[edge] += weight
 
-                if cu != cv:
-                    # Undirected: sort community pair to avoid duplicates
-                    edge = tuple(sorted((cu, cv)))
-                    edge_weights[edge] += weight
+                        # Tracks louvain community ids that connect to other communities
+                        if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
+                            unisolatedCommunities = np.append(unisolatedCommunities, cu)
+            elif minBasinLargerThanSmallMergers:
+                print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
+                # Get the area weights and basinID
+                # area = nx.get_node_attributes(self.G, "areaWeightm2")
+                
+                # basinID = nx.get_node_attributes(self.G, "basinID")
 
-                    # Tracks louvain community ids that connect to other communities
-                    if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
-                        unisolatedCommunities = np.append(unisolatedCommunities, cu)
+                # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
+                # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
+
+                # # Sum areas with same basinIDs.
+                # sumCommunities = np.zeros(len(np.unique(basinIDList)))
+                # for i in range(len(np.unique(basinIDList))):
+                #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
+
+                # Get the area weights and basinID
+                area = nx.get_node_attributes(self.G, "areaWeightm2")
+                areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
+
+                # Sum areas with same basinIDs.
+                sumCommunities = np.zeros(len(self.Lcommunities))
+                for i in range(len(sumCommunities)):
+                    sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.Lcommunities[i]) ) ] )
+                
+                if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
+                    # Using % of spatial graph area
+
+                    # Define in percentage of total graph area.
+                    sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
+
+                    # Make list of communities that are larger than the smallest merged community
+                    smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+
+                    # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
+                    # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
+                    # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
+                else:
+                    # Using absolute values of spatial graph area (i.e., m2)
+
+                    # Make list of communities that are larger than the smallest merged community
+                    smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+            
 
             # Communities that share no edge with other community
             # Used for determining the number of unisolated communities
             # when using the girvan-newman algorithm.
-            isolatedCommunitiesCnt = len(Lcommunities)-len(unisolatedCommunities);
+            # print("\n\n\n\nsum(unisolatedCommunities): {}\n\n\n\n".format(np.sum(unisolatedCommunities)))
+            # print("\n\n\n\nunisolatedCommunities: {}\n\n\n\n".format(unisolatedCommunities) )
+            isolatedCommunitiesCnt = len(Lcommunities)- len(unisolatedCommunities)
 
             # Add weighted edges to Gnew
             for (cu, cv), edge_weight in edge_weights.items():
                 self.Gnew.add_edge(cu, cv, bathyAve=edge_weight)
 
             # Apply Girvan–Newman algorithm to the simplified community graph
-            communitityCnt = isolatedCommunitiesCnt + minBasinCnt
+            communityCnt = isolatedCommunitiesCnt + minBasinCnt
+            print("\n\ncommunityCnt {}\n\n".format( communityCnt ) )
             comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
-            limited = itertools.takewhile(lambda c: len(c) <= communitityCnt, comp)
+            limited = itertools.takewhile(lambda c: len(c) <= communityCnt, comp)
             for communities in limited:
                 GNcommunities = communities
+            self.GNcommunities = GNcommunities
             
             # Map each Girvan–Newman community to its Louvain community
             louvain_to_gn = {}
@@ -7636,6 +8919,15 @@ def mergerPackages(package = '', verbose=True):
         # Package only merges to have basins larger than 0.5% total surface of oceans
         mergerPackage = {'mergeSmallBasins': {'on':True,
                                               'threshold':np.array([.1,.5]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+
+    elif package == 'None':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([0]),
                                               'thresholdMethod':'%',
                                               'mergeMethod':'nearBasinEdge'},
                         'verbose':True};
