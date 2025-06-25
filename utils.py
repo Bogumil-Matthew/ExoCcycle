@@ -1897,6 +1897,9 @@ class BasinsEA():
                 minBasinCnt : INT
                     The minimum amount of basins the user chooses to define
                     for the given bathymetry model input.
+                ensembleSize : INT
+                    Number of community detection runs to use in the community
+                    reduction step of a composite community detection.
                 minBasinLargerThanSmallMergers : BOOLEAN
                     An option that requires the minBasinCnt variable to equal
                     to the number of merged basins that are larger than the
@@ -4117,6 +4120,24 @@ class BasinsEA():
             centrality = nx.edge_betweenness_centrality(G, weight='bathyAve')
             return max(centrality, key=centrality.get)
 
+
+        # Assign defaults 
+
+        ## Set ensembleSize parameter. Set to 1 if not defined
+        try:
+            ensembleSize = detectionMethod['ensembleSize'];
+        except:
+            ensembleSize = 1;
+
+        if (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
+            import leidenalg
+            # Optimization Strategy
+            #OpStrat = leidenalg.CPMVertexPartition
+            OpStrat = leidenalg.RBConfigurationVertexPartition
+            #leidenalg.CPMVertexPartition
+            #leidenalg.RBConfigurationVertexPartition
+
+
         if method=="Girvan-Newman":
             # Run Girvan-Newman algorithm
             self.communities = list(nx.community.girvan_newman(self.G, most_valuable_edge=mostCentralEdge));
@@ -4236,11 +4257,17 @@ class BasinsEA():
 
             # Apply Girvan–Newman algorithm to the simplified community graph
             communityCnt = isolatedCommunitiesCnt + minBasinCnt
-            print("\n\ncommunityCnt {}\n\n".format( communityCnt ) )
+            print("Louvain Communities ({0}), Target ({1}), Isolated Communities {2}".format(len(Lcommunities),communityCnt, isolatedCommunitiesCnt))
+            import time
+
+            timestamp1 = time.time();
             comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
+            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
             limited = itertools.takewhile(lambda c: len(c) <= communityCnt, comp)
+            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
             for communities in limited:
                 GNcommunities = communities
+            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
             self.GNcommunities = GNcommunities
             
             # Map each Girvan–Newman community to its Louvain community
@@ -4250,6 +4277,7 @@ class BasinsEA():
                     louvain_to_gn[c] = idx
             
             # Map each original node to a Girvan–Newman community via its Louvain community
+            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
             commNodes = [{} for _ in range(len(Lcommunities))]
             for commL in louvain_to_gn:
                 commGN = louvain_to_gn[commL];
@@ -4265,6 +4293,431 @@ class BasinsEA():
                 
             # Redefine the node community structure using Louvain & Girvan Newman composite communities
             self.communitiesFinal = commNodes;
+
+            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
+
+        elif method=="Leiden-Girvan-Newman":
+            # Hierarchical community detection method 
+            #
+            # Imports
+            from collections import defaultdict
+            import itertools
+
+            ### START OF LEIDEN COMMUNITY DETECTION ###
+            import igraph as ig
+            import leidenalg
+            from sklearn.cluster import AgglomerativeClustering
+            from cdlib import NodeClustering
+
+
+            def consensus_leiden(graph_nx,
+                                 resolution_parameter=1.0,
+                                 weight_attr="bathyAve",
+                                 runs=20,
+                                 distance_threshold=0.25):
+                """
+                consensus_leiden is a function that creates a consensus
+                clustering from multiple Leiden runs with proper nod
+                name handling and configurable threshold.
+
+                graph_nx : NETWORKX GRAPH
+                    networkx constructed graph with nodes and edge
+                    connections with variable 'weight_attr' defined.
+                resolution_parameter : FLOAT
+                    Leiden resolution parameter. Values larger than
+                    1 favor smaller (more) communities while a value
+                    smaller than 1 favors larger (less) communities.
+                weight_attr : STRING
+                    Name of the graph edge weight to use for
+                    community calculation.
+                runs : INT
+                    Number of Leiden used to create consensus.
+                distance_threshold : FLOAT
+
+                """
+                # Stable node ordering
+                nodes = sorted(graph_nx.nodes())
+                n = len(nodes)
+                node_to_idx = {node: i for i, node in enumerate(nodes)}
+                idx_to_node = {i: node for node, i in node_to_idx.items()}
+
+                # Build weighted edge list with consistent node labels
+                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+                g = ig.Graph()
+                g.add_vertices(n)
+                g.add_edges([(u, v) for u, v, w in edges])
+                g.es["weight"] = [w for _, _, w in edges]
+                g.vs["name"] = list(range(n))  # Stable index-named nodes
+
+                # Initialize co-association matrix
+                coassoc = np.zeros((n, n))
+
+
+                for i in range(runs):
+                    part = leidenalg.find_partition(
+                        g,
+                        OpStrat,
+                        resolution_parameter=resolution_parameter,
+                        weights=g.es["weight"],
+                        seed=i
+                    )
+                    for community in part:
+                        for u in community:
+                            for v in community:
+                                coassoc[u, v] += 1
+
+                # Normalize co-association matrix
+                coassoc /= runs
+
+                # Convert to dissimilarity for clustering
+                distance = 1.0 - coassoc
+
+                # Use Agglomerative Clustering with better threshold control
+                model = AgglomerativeClustering(
+                    metric="precomputed",
+                    linkage="average",
+                    distance_threshold=distance_threshold,
+                    n_clusters=None
+                )
+                labels = model.fit_predict(distance)
+
+                # Group nodes by cluster labels
+                consensus_communities = [[] for _ in range(max(labels)+1)]
+                for idx, label in enumerate(labels):
+                    consensus_communities[label].append(idx_to_node[idx])
+
+                # Convert to sets
+                consensus_communities = [set(c) for c in consensus_communities]
+
+                return NodeClustering(
+                    communities=consensus_communities,
+                    graph=graph_nx,
+                    method_name="consensus_leiden_fixed",
+                    method_parameters={
+                        "resolution_parameter": resolution_parameter,
+                        "runs": runs,
+                        "distance_threshold": distance_threshold
+                    }
+                )
+
+            # Set resolution parameter
+            resolution_parameter=resolution;
+
+            LDcommunities = consensus_leiden(self.G,
+                                             resolution_parameter=resolution_parameter,
+                                             distance_threshold=0.3,
+                                             runs=ensembleSize)
+            LDcommunities = LDcommunities.communities;
+
+            self.LDcommunities = cp.deepcopy(LDcommunities)
+            self.LDcommunitiesUnaltered = cp.deepcopy(LDcommunities);
+
+            ### END OF LEIDEN COMMUNITY DETECTION ###
+
+            ## Mapping from node to community index from Leiden community detection
+            node_to_comm = {}
+            for idx, comm in enumerate(LDcommunities):
+                for node in comm:
+                    node_to_comm[node] = idx
+            
+            # Construct new graph with Leiden community consolidated nodes
+            self.Gnew = nx.Graph()
+
+            # Add *all* communities as nodes, even if disconnected
+            self.Gnew.add_nodes_from(range(len(LDcommunities)))  # One node per community index
+
+            # Propagate and sum node attributes from self.G to self.Gnew
+            node_attrs_to_sum = ['areaWeightm2']
+            comm_attr_sums = {attr: defaultdict(float) for attr in node_attrs_to_sum}
+
+            # Sum attributes by community
+            for node, data in self.G.nodes(data=True):
+                comm = node_to_comm[node]
+                for attr in node_attrs_to_sum:
+                    val = data.get(attr, 0.0)
+                    comm_attr_sums[attr][comm] += val
+
+            # Assign summed attributes to Gnew community nodes
+            for attr in node_attrs_to_sum:
+                for comm, total in comm_attr_sums[attr].items():
+                    self.Gnew.nodes[comm][attr] = total
+
+
+            # Track summed weights between communities
+            edge_weights = defaultdict(float)
+
+            # Track unisolated Leiden communities (communities that connect to other communities).
+            unisolatedCommunities = np.array([]);
+            smallCommunities = np.array([]);
+            if not minBasinLargerThanSmallMergers:
+                # Iterate over all edges in the original graph
+                for u, v, data in self.G.edges(data=True):
+                    cu = node_to_comm[u]
+                    cv = node_to_comm[v]
+                    weight = data.get('bathyAve', 1.0)
+
+                    if cu != cv:
+                        # Undirected: sort community pair to avoid duplicates
+                        edge = tuple(sorted((cu, cv)))
+                        edge_weights[edge] += weight
+
+                        # Tracks louvain community ids that connect to other communities
+                        if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
+                            unisolatedCommunities = np.append(unisolatedCommunities, cu)
+            elif minBasinLargerThanSmallMergers:
+                print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
+                # Get the area weights and basinID
+                # area = nx.get_node_attributes(self.G, "areaWeightm2")
+                
+                # basinID = nx.get_node_attributes(self.G, "basinID")
+
+                # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
+                # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
+
+                # # Sum areas with same basinIDs.
+                # sumCommunities = np.zeros(len(np.unique(basinIDList)))
+                # for i in range(len(np.unique(basinIDList))):
+                #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
+
+                # Get the area weights and basinID
+                area = nx.get_node_attributes(self.G, "areaWeightm2")
+                areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
+
+                # Sum areas with same basinIDs.
+                sumCommunities = np.zeros(len(self.LDcommunities))
+                for i in range(len(sumCommunities)):
+                    sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.LDcommunities[i]) ) ] )
+                
+                if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
+                    # Using % of spatial graph area
+
+                    # Define in percentage of total graph area.
+                    sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
+
+                    # Make list of communities that are larger than the smallest merged community
+                    smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+
+                    # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
+                    # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
+                    # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
+                else:
+                    # Using absolute values of spatial graph area (i.e., m2)
+
+                    # Make list of communities that are larger than the smallest merged community
+                    smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+            
+
+            # Communities that share no edge with other community
+            # Used for determining the number of unisolated communities
+            # when using the girvan-newman algorithm.
+            # print("\n\n\n\nsum(unisolatedCommunities): {}\n\n\n\n".format(np.sum(unisolatedCommunities)))
+            # print("\n\n\n\nunisolatedCommunities: {}\n\n\n\n".format(unisolatedCommunities) )
+            isolatedCommunitiesCnt = len(LDcommunities)- len(unisolatedCommunities)
+
+            # Add weighted edges to Gnew
+            for (cu, cv), edge_weight in edge_weights.items():
+                self.Gnew.add_edge(cu, cv, bathyAve=edge_weight)
+
+            # Apply Girvan–Newman algorithm to the simplified community graph
+            # communityCnt = isolatedCommunitiesCnt + minBasinCnt
+            # print("Leiden Communities ({0}), Target ({1}), Isolated Communities {2}".format(len(LDcommunities),communityCnt, isolatedCommunitiesCnt))
+            # import time
+            # timestamp1 = time.time();
+            # comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
+            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
+            # limited = itertools.takewhile(lambda c: len(c) <= communityCnt, comp)
+            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
+            # for communities in limited:
+            #     GNcommunities = communities
+            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
+            # self.GNcommunities = GNcommunities
+
+            # Apply Girvan–Newman algorithm to the simplified community graph
+            comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
+            
+
+            if detectionMethod['mergerPackage']['mergeSmallBasins']['on']:
+                # Iteratively run the Girvan-Newman algorithm until X communities greater than areaThreshold are detected.
+
+                # Define attribute to merge
+                node_attr = 'areaWeightm2'
+                # Find total global area
+                GlobalArea = sum(self.Gnew.nodes[n].get(node_attr, 0.0) for n in self.Gnew.nodes);
+                
+                # Change the threshold for 'small' basin based on what unit is deined.
+                if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
+                    # Defined small basin mergers with percent (%) total field area.
+                    areaThreshold = GlobalArea*(np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])/100)
+                else:
+                    # Defined small basin mergers with SI unit (m) 
+                    areaThreshold = np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']);
+            
+                # Iterate through Girvan-Newman algorithm.
+                for communities in comp:
+                    # Convert tuple of sets to list of communities
+                    community_list = list(communities)
+
+                    # Compute areaWeightm2 sum for each community
+                    areaSums = []
+                    for comm in community_list:
+                        totalArea = sum(self.Gnew.nodes[n].get(node_attr, 0.0) for n in comm)
+                        areaSums.append(totalArea)
+
+                    # Count communities exceeding threshold Y
+                    large_comm_count = sum(area > areaThreshold for area in areaSums)
+
+                    # Break when condition is met
+                    if large_comm_count >= detectionMethod['minBasinCnt']:
+                        # print("Final: large_comm_count, detectionMethod['minBasinCnt']", large_comm_count, detectionMethod['minBasinCnt'])
+                        GNcommunities = community_list
+                        break
+            else:
+                # Remove merge communities until detectionMethod['mergerPackage']['minBasinCnt'] is reached
+                limited = itertools.takewhile(lambda c: len(c) <= detectionMethod['minBasinCnt'], comp)
+                for communities in limited:
+                    GNcommunities = communities
+
+            # Assign the Girvan-Newman community structure to a class attribute. 
+            self.GNcommunities = GNcommunities
+
+
+            
+            # Map each Girvan–Newman community to its Leiden community
+            louvain_to_gn = {}
+            for idx, comm in enumerate(GNcommunities):
+                for c in comm:
+                    louvain_to_gn[c] = idx
+            
+            # Map each original node to a Girvan–Newman community via its Leiden community
+            commNodes = [{} for _ in range(len(LDcommunities))]
+            for commL in louvain_to_gn:
+                commGN = louvain_to_gn[commL];
+                
+                #print(LDcommunities[commL])
+                try:
+                    # Do not comment out. If this code can run then commNodes[commGN]
+                    # has already been defined
+                    len(commNodes[commGN]);
+                    commNodes[commGN].update(LDcommunities[commL])
+                except:
+                    commNodes[commGN] = LDcommunities[commL]
+                
+            # Redefine the node community structure using Leiden & Girvan Newman composite communities
+            self.communitiesFinal = commNodes;
+
+
+        elif method=="Leiden":
+            import igraph as ig
+            import leidenalg
+            from sklearn.cluster import AgglomerativeClustering
+            from cdlib import NodeClustering
+
+            def consensus_leiden(graph_nx,
+                                 resolution_parameter=1.0,
+                                 weight_attr="bathyAve",
+                                 runs=20,
+                                 distance_threshold=0.25):
+                """
+                consensus_leiden is a function that creates a consensus
+                clustering from multiple Leiden runs with proper nod
+                name handling and configurable threshold.
+
+                graph_nx : NETWORKX GRAPH
+                    networkx constructed graph with nodes and edge
+                    connections with variable 'weight_attr' defined.
+                resolution_parameter : FLOAT
+                    Leiden resolution parameter. Values larger than
+                    1 favor smaller (more) communities while a value
+                    smaller than 1 favors larger (less) communities.
+                weight_attr : STRING
+                    Name of the graph edge weight to use for
+                    community calculation.
+                runs : INT
+                    Number of Leiden used to create consensus.
+                distance_threshold : FLOAT
+
+                """
+                # Stable node ordering
+                nodes = sorted(graph_nx.nodes())
+                n = len(nodes)
+                node_to_idx = {node: i for i, node in enumerate(nodes)}
+                idx_to_node = {i: node for node, i in node_to_idx.items()}
+
+                # Build weighted edge list with consistent node labels
+                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+                g = ig.Graph()
+                g.add_vertices(n)
+                g.add_edges([(u, v) for u, v, w in edges])
+                g.es["weight"] = [w for _, _, w in edges]
+                g.vs["name"] = list(range(n))  # Stable index-named nodes
+
+                # Initialize co-association matrix
+                coassoc = np.zeros((n, n))
+
+
+                for i in range(runs):
+                    part = leidenalg.find_partition(
+                        g,
+                        OpStrat,
+                        resolution_parameter=resolution_parameter,
+                        weights=g.es["weight"],
+                        seed=i
+                    )
+                    for community in part:
+                        for u in community:
+                            for v in community:
+                                coassoc[u, v] += 1
+
+                # Normalize co-association matrix
+                coassoc /= runs
+
+                # Convert to dissimilarity for clustering
+                distance = 1.0 - coassoc
+
+                # Use Agglomerative Clustering with better threshold control
+                model = AgglomerativeClustering(
+                    metric="precomputed",
+                    linkage="average",
+                    distance_threshold=distance_threshold,
+                    n_clusters=None
+                )
+                labels = model.fit_predict(distance)
+
+                # Group nodes by cluster labels
+                consensus_communities = [[] for _ in range(max(labels)+1)]
+                for idx, label in enumerate(labels):
+                    consensus_communities[label].append(idx_to_node[idx])
+
+                # Convert to sets
+                consensus_communities = [set(c) for c in consensus_communities]
+
+                return NodeClustering(
+                    communities=consensus_communities,
+                    graph=graph_nx,
+                    method_name="consensus_leiden_fixed",
+                    method_parameters={
+                        "resolution_parameter": resolution_parameter,
+                        "runs": runs,
+                        "distance_threshold": distance_threshold
+                    }
+                )
+
+
+            # Set resolution parameter
+            resolution_parameter=resolution;
+
+            LDcommunities = consensus_leiden(self.G,
+                                             resolution_parameter=resolution_parameter,
+                                             distance_threshold=0.3,
+                                             runs=ensembleSize)
+            LDcommunities = LDcommunities.communities;
+
+            self.LDcommunities = cp.deepcopy(LDcommunities)
+            self.LDcommunitiesUnaltered = cp.deepcopy(LDcommunities);
+
+            self.communitiesFinal = self.LDcommunities;
+
+            print("len(LDcommunities)", len(LDcommunities))
 
         else:
             # Redefine the node community structure using Louvain communities
@@ -7075,7 +7528,7 @@ class Basins():
     def mergeSmallBasins(self, threshold, thresholdMethod, mergeMethod, write=False):
         """
         mergeSmallBasins method will merge basins below some threshold
-        surface area with the closest basins of above that same threshold.
+        surface area with the closest basins above that same threshold.
         The resulting basin network is then rewitten to the original,
         overriding the original basinID network. Note that there is no
         need to reread the basin network. 
