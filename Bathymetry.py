@@ -135,19 +135,19 @@ class BathyMeasured():
 
         # Download model
         if self.model == "Venus2":
-            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif"):
+            if not os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif".format(data_dir, self.model)):
                 os.system("wget -O {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif https://planetarymaps.usgs.gov/mosaic/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif".format(data_dir, self.model));
-            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif".format(data_dir, self.model)):
+            if not os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif".format(data_dir, self.model)):
                 os.system("export PROJ_IGNORE_CELESTIAL_BODY=YES &&\
                         gdalwarp -t_srs EPSG:4326 {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.tif {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif".format(data_dir, self.model));
-            if os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model)):
+            if not os.path.exists("{0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model)):
                 os.system("gdal_translate -of NetCDF {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m_reprojected.tif {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc".format(data_dir, self.model));
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K -Vq> {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Venus":
-            if os.path.exists("{0}/topographies/{1}/topogrd.img"):
+            if not os.path.exists("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model)):
                 os.system("wget -O {0}/topographies/{1}/topogrd.img https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img".format(data_dir, self.model));
-            if os.path.exists("{0}/topographies/{1}/topogrd.nc"):
+            if not os.path.exists("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model)):
                 # Write netCDF file
                 ## Read .img
                 fid = open("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model), 'rb');
@@ -185,23 +185,23 @@ class BathyMeasured():
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/topogrd.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Earth":
-            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz"):
-                os.system("wget -O {0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd.gz https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO1/data/ice_surface/cell_registered/netcdf/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir))
-            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.grd"):
+            if not os.path.exists("{0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir, self.model)):
+                os.system("wget -O {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd.gz https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO1/data/ice_surface/cell_registered/netcdf/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir, self.model))
+            if not os.path.exists("{0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd".format(data_dir, self.model)):
                 os.system("yes N | gzip -k -d {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd.gz".format(data_dir, self.model));
-            if os.path.exists("{0}/topographies/Earth/ETOPO1_Ice_c_gdal.nc"):
+            if not os.path.exists("{0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc".format(data_dir, self.model)):
                 os.system("gmt grdconvert {0}/topographies/{1}/ETOPO1_Ice_c_gdal.grd {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -fg -Vq".format(data_dir, self.model))
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/ETOPO1_Ice_c_gdal.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Mars":
-            if os.path.exists("{0}/topographies/{1}/mola32.nc"):
+            if not os.path.exists("{0}/topographies/{1}/mola32.nc".format(data_dir, self.model)):
                 os.system("wget -O {0}/topographies/{1}/mola32.nc https://github.com/andrebelem/PlanetaryMaps/raw/v1.0/mola32.nc".format(data_dir, self.model))
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/mola32.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Moon":
-            if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.grd"):
+            if not os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.grd".format(data_dir, self.model)):
                 os.system("wget -O {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd https://pgda.gsfc.nasa.gov/data/LOLA_PA/LDEM64_PA_pixel_202405.grd".format(data_dir, self.model));
-            if os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.nc"):
+            if not os.path.exists("{0}/topographies/{1}/LDEM64_PA_pixel_202405.nc".format(data_dir, self.model)):
                 os.system("gmt grdconvert {0}/topographies/{1}/LDEM64_PA_pixel_202405.grd {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -fg -Vq".format(data_dir, self.model));
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
