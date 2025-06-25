@@ -4449,62 +4449,62 @@ class BasinsEA():
             # Track unisolated Leiden communities (communities that connect to other communities).
             unisolatedCommunities = np.array([]);
             smallCommunities = np.array([]);
-            if not minBasinLargerThanSmallMergers:
-                # Iterate over all edges in the original graph
-                for u, v, data in self.G.edges(data=True):
-                    cu = node_to_comm[u]
-                    cv = node_to_comm[v]
-                    weight = data.get('bathyAve', 1.0)
+            #if not minBasinLargerThanSmallMergers:
+            # Iterate over all edges in the original graph
+            for u, v, data in self.G.edges(data=True):
+                cu = node_to_comm[u]
+                cv = node_to_comm[v]
+                weight = data.get('bathyAve', 1.0)
 
-                    if cu != cv:
-                        # Undirected: sort community pair to avoid duplicates
-                        edge = tuple(sorted((cu, cv)))
-                        edge_weights[edge] += weight
+                if cu != cv:
+                    # Undirected: sort community pair to avoid duplicates
+                    edge = tuple(sorted((cu, cv)))
+                    edge_weights[edge] += weight
 
-                        # Tracks louvain community ids that connect to other communities
-                        if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
-                            unisolatedCommunities = np.append(unisolatedCommunities, cu)
-            elif minBasinLargerThanSmallMergers:
-                print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
-                # Get the area weights and basinID
-                # area = nx.get_node_attributes(self.G, "areaWeightm2")
+                    # # Tracks louvain community ids that connect to other communities
+                    # if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
+                    #     unisolatedCommunities = np.append(unisolatedCommunities, cu)
+            # elif minBasinLargerThanSmallMergers:
+            #     # print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
+            #     # Get the area weights and basinID
+            #     # area = nx.get_node_attributes(self.G, "areaWeightm2")
                 
-                # basinID = nx.get_node_attributes(self.G, "basinID")
+            #     # basinID = nx.get_node_attributes(self.G, "basinID")
 
-                # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
-                # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
+            #     # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
+            #     # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
 
-                # # Sum areas with same basinIDs.
-                # sumCommunities = np.zeros(len(np.unique(basinIDList)))
-                # for i in range(len(np.unique(basinIDList))):
-                #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
+            #     # # Sum areas with same basinIDs.
+            #     # sumCommunities = np.zeros(len(np.unique(basinIDList)))
+            #     # for i in range(len(np.unique(basinIDList))):
+            #     #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
 
-                # Get the area weights and basinID
-                area = nx.get_node_attributes(self.G, "areaWeightm2")
-                areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
+            #     # Get the area weights and basinID
+            #     area = nx.get_node_attributes(self.G, "areaWeightm2")
+            #     areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
 
-                # Sum areas with same basinIDs.
-                sumCommunities = np.zeros(len(self.LDcommunities))
-                for i in range(len(sumCommunities)):
-                    sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.LDcommunities[i]) ) ] )
+            #     # Sum areas with same basinIDs.
+            #     sumCommunities = np.zeros(len(self.LDcommunities))
+            #     for i in range(len(sumCommunities)):
+            #         sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.LDcommunities[i]) ) ] )
                 
-                if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
-                    # Using % of spatial graph area
+            #     if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
+            #         # Using % of spatial graph area
 
-                    # Define in percentage of total graph area.
-                    sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
+            #         # Define in percentage of total graph area.
+            #         sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
 
-                    # Make list of communities that are larger than the smallest merged community
-                    smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+            #         # Make list of communities that are larger than the smallest merged community
+            #         smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
 
-                    # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
-                    # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
-                    # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
-                else:
-                    # Using absolute values of spatial graph area (i.e., m2)
+            #         # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
+            #         # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
+            #         # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
+            #     else:
+            #         # Using absolute values of spatial graph area (i.e., m2)
 
-                    # Make list of communities that are larger than the smallest merged community
-                    smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
+            #         # Make list of communities that are larger than the smallest merged community
+            #         smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
             
 
             # Communities that share no edge with other community
@@ -4512,7 +4512,7 @@ class BasinsEA():
             # when using the girvan-newman algorithm.
             # print("\n\n\n\nsum(unisolatedCommunities): {}\n\n\n\n".format(np.sum(unisolatedCommunities)))
             # print("\n\n\n\nunisolatedCommunities: {}\n\n\n\n".format(unisolatedCommunities) )
-            isolatedCommunitiesCnt = len(LDcommunities)- len(unisolatedCommunities)
+            #isolatedCommunitiesCnt = len(LDcommunities)- len(unisolatedCommunities)
 
             # Add weighted edges to Gnew
             for (cu, cv), edge_weight in edge_weights.items():
@@ -4536,7 +4536,10 @@ class BasinsEA():
             comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
             
 
-            if detectionMethod['mergerPackage']['mergeSmallBasins']['on']:
+            
+
+            if minBasinLargerThanSmallMergers:
+                print("Girvan-Newman mergers such that {0} basins larger than {1} {2}".format(detectionMethod['minBasinCnt'],np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']), detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod']))
                 # Iteratively run the Girvan-Newman algorithm until X communities greater than areaThreshold are detected.
 
                 # Define attribute to merge
@@ -4570,8 +4573,8 @@ class BasinsEA():
                     if large_comm_count >= detectionMethod['minBasinCnt']:
                         # print("Final: large_comm_count, detectionMethod['minBasinCnt']", large_comm_count, detectionMethod['minBasinCnt'])
                         GNcommunities = community_list
-                        break
-            else:
+                        break            
+            else:                
                 # Remove merge communities until detectionMethod['mergerPackage']['minBasinCnt'] is reached
                 limited = itertools.takewhile(lambda c: len(c) <= detectionMethod['minBasinCnt'], comp)
                 for communities in limited:
