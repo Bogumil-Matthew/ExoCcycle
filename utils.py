@@ -4132,10 +4132,16 @@ class BasinsEA():
         if (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
             import leidenalg
             # Optimization Strategy
-            #OpStrat = leidenalg.CPMVertexPartition
-            OpStrat = leidenalg.RBConfigurationVertexPartition
-            #leidenalg.CPMVertexPartition
-            #leidenalg.RBConfigurationVertexPartition
+            #OpStrat = leidenalg.CPMVertexPartition              # Constant potts model
+            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
+            OpStrat = leidenalg.RBConfigurationVertexPartition  # Modularity with resolution parameter
+
+        if (method=="Louvain") | (method=="Louvain-Girvan-Newman"):
+            import louvain
+            # Optimization Strategy
+            #OpStrat = louvain.CPMVertexPartition                # Constant potts model
+            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
+            OpStrat = louvain.RBConfigurationVertexPartition;   # Modularity with resolution parameter
 
 
         if method=="Girvan-Newman":
@@ -4721,6 +4727,118 @@ class BasinsEA():
             self.communitiesFinal = self.LDcommunities;
 
             print("len(LDcommunities)", len(LDcommunities))
+
+        elif  method=="Louvain":
+            import igraph as ig
+            import louvain
+            from sklearn.cluster import AgglomerativeClustering
+            from cdlib import NodeClustering
+
+            def consensus_louvain(graph_nx,
+                                 resolution_parameter=1.0,
+                                 weight_attr="bathyAve",
+                                 runs=20,
+                                 distance_threshold=0.25):
+                """
+                consensus_louvain is a function that creates a consensus
+                clustering from multiple Louvain runs with proper nod
+                name handling and configurable threshold.
+
+                graph_nx : NETWORKX GRAPH
+                    networkx constructed graph with nodes and edge
+                    connections with variable 'weight_attr' defined.
+                resolution_parameter : FLOAT
+                    Leiden resolution parameter. Values larger than
+                    1 favor smaller (more) communities while a value
+                    smaller than 1 favors larger (less) communities.
+                weight_attr : STRING
+                    Name of the graph edge weight to use for
+                    community calculation.
+                runs : INT
+                    Number of Leiden used to create consensus.
+                distance_threshold : FLOAT
+
+                """
+                # Stable node ordering
+                nodes = sorted(graph_nx.nodes())
+                n = len(nodes)
+                node_to_idx = {node: i for i, node in enumerate(nodes)}
+                idx_to_node = {i: node for node, i in node_to_idx.items()}
+
+                # Build weighted edge list with consistent node labels
+                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+                g = ig.Graph()
+                g.add_vertices(n)
+                g.add_edges([(u, v) for u, v, w in edges])
+                g.es["weight"] = [w for _, _, w in edges]
+                g.vs["name"] = list(range(n))  # Stable index-named nodes
+
+                # Initialize co-association matrix
+                coassoc = np.zeros((n, n))
+
+
+                for i in range(runs):
+                    part = louvain.find_partition(
+                        g,
+                        OpStrat,
+                        resolution_parameter=resolution_parameter,
+                        weights=g.es["weight"],
+                        seed=i
+                    )
+                    for community in part:
+                        for u in community:
+                            for v in community:
+                                coassoc[u, v] += 1
+
+                # Normalize co-association matrix
+                coassoc /= runs
+
+                # Convert to dissimilarity for clustering
+                distance = 1.0 - coassoc
+
+                # Use Agglomerative Clustering with better threshold control
+                model = AgglomerativeClustering(
+                    metric="precomputed",
+                    linkage="average",
+                    distance_threshold=distance_threshold,
+                    n_clusters=None
+                )
+                labels = model.fit_predict(distance)
+
+                # Group nodes by cluster labels
+                consensus_communities = [[] for _ in range(max(labels)+1)]
+                for idx, label in enumerate(labels):
+                    consensus_communities[label].append(idx_to_node[idx])
+
+                # Convert to sets
+                consensus_communities = [set(c) for c in consensus_communities]
+
+                return NodeClustering(
+                    communities=consensus_communities,
+                    graph=graph_nx,
+                    method_name="consensus_louvain_fixed",
+                    method_parameters={
+                        "resolution_parameter": resolution_parameter,
+                        "runs": runs,
+                        "distance_threshold": distance_threshold
+                    }
+                )
+
+
+            # Set resolution parameter
+            resolution_parameter=resolution;
+
+            Lcommunities  = consensus_louvain(self.G,
+                                             resolution_parameter=resolution_parameter,
+                                             distance_threshold=0.3,
+                                             runs=ensembleSize)
+            Lcommunities  = Lcommunities.communities;
+
+            self.Lcommunities          = cp.deepcopy(Lcommunities)
+            self.LcommunitiesUnaltered = cp.deepcopy(Lcommunities);
+
+            self.communitiesFinal = self.Lcommunities;
+            print("Louvain CD")
 
         else:
             # Redefine the node community structure using Louvain communities
