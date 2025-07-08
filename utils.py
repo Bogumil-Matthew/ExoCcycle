@@ -2287,12 +2287,15 @@ class BasinsEA():
 
             for field in self.Fields['usedFields']:
                 ### Get outliers filtered dataEdgeDiff using the IQR method.
-                self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr(self.Fields[field]['dataEdgeDiff']);
-
                 ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
                 ## This is appropriate since each edge is bidirectional.
                 ## As a result, the mean should be zero.
+                self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr(self.Fields[field]['dataEdgeDiff']);
+                #self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr( np.append(self.Fields[field]['dataEdgeDiff'], -self.Fields[field]['dataEdgeDiff']) );
+
+                # Calculate standard deivation
                 self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered']) );
+                #self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( self.Fields[field]['dataEdgeDiffIQRFiltered'] );
 
                 ## Define dataRange with dataEdgeDiffIQRFiltered
                 self.Fields[field]['dataEdgeDiffRange'] = np.max(self.Fields[field]['dataEdgeDiffIQRFiltered']) - np.min(self.Fields[field]['dataEdgeDiffIQRFiltered'])
@@ -2508,6 +2511,7 @@ class BasinsEA():
                     from sklearn.preprocessing import QuantileTransformer
                     
                     xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                    #xValues = cp.deepcopy(self.Fields[field]['dataEdgeDiffIQRFiltered'])
                     self.Fields[field]['weightMethodPara']['qt'] = \
                         QuantileTransformer(n_quantiles=1000,
                                             random_state=0,

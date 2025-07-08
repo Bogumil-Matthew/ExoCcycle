@@ -297,7 +297,7 @@ class BathyMeasured():
                 # Close dataset
                 self.nc.close();
                 # Resample and reread dataset 
-                os.system("gmt grdsample {0} -Rd -I1d -rp -G{1} -Vq".format(TopoPath, TopoPath.replace(".nc", "_resampled.nc")))
+                os.system("gmt grdsample {0} -Rd -I{2}d -rp -G{1} -Vq".format(TopoPath, TopoPath.replace(".nc", "_resampled.nc"), new_resolution))
                 TopoPath = TopoPath.replace(".nc", "_resampled.nc");
                 self.nc = Dataset(TopoPath);
                 # Need to redefine the lat/lon/elevation naming scheme
@@ -606,7 +606,7 @@ class BathyMeasured():
 
         
         # Define degree to area weights
-        areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+        areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = self.resolution, radius = self.radiuskm*1e3, verbose=False);
         self.areaWeights = areaWeights;
 
         # Define initial bathymetry model with minimum elevation set to 0 m (sea-level)
