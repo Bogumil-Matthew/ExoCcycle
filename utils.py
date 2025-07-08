@@ -1654,7 +1654,7 @@ class BasinsEA():
     def getFields(self, usedFields = False):
         """
         getFields method is used to output the information of all fields stored
-        within the BasinEA object.
+        within the BasinsEA object.
 
         Parameter
         ----------
@@ -2300,6 +2300,12 @@ class BasinsEA():
                 ## Define a dictionary to hold the weight parameters
                 self.Fields[field]['weightMethodPara'] = {};
 
+                ## Define the multi field merger method
+                try:
+                    edgeWeightMethod['multiFieldMethod'];
+                except:
+                    edgeWeightMethod['multiFieldMethod'] = "mean";
+
                 ## Set lower bound for difference value to influence connectivity
                 ## Assuming a normal distribution
                 ## factor = 5: Strength in node connection changes over 84% data with greater variation than the 16% with the lowest variation.
@@ -2707,17 +2713,19 @@ class BasinsEA():
                                     # Move data field index
                                     cnt+=1
 
-                            # Take the product of all fields
-                            #S = np.nanprod(Ss)
-
-                            # Take the max of all fields
-                            #S = np.nanmin(Ss)
-
-                            # Take the min of all fields
-                            #S = np.nanmax(Ss)
-
-                            # Take the mean of all fields
-                            S = np.nanmean(Ss)
+                            # Merge field weights, default is mean
+                            if edgeWeightMethod['multiFieldMethod'] == "prod":
+                                # Take the product of all fields
+                                S = np.nanprod(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "min":
+                                # Take the max of all fields
+                                S = np.nanmin(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "max":
+                                # Take the min of all fields
+                                S = np.nanmax(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "mean":
+                                # Take the mean of all fields
+                                S = np.nanmean(Ss)
 
 
                         elif useNormPDFFittedSigmoid:
@@ -2793,17 +2801,19 @@ class BasinsEA():
                                     # Move data field index
                                     cnt+=1
 
-                            # Take the product of all fields
-                            #S = np.nanprod(Ss)
-
-                            # Take the max of all fields
-                            #S = np.nanmin(Ss)
-
-                            # Take the min of all fields
-                            #S = np.nanmax(Ss)
-
-                            # Take the mean of all fields
-                            S = np.nanmean(Ss)
+                            # Merge field weights, default is mean
+                            if edgeWeightMethod['multiFieldMethod'] == "prod":
+                                # Take the product of all fields
+                                S = np.nanprod(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "min":
+                                # Take the max of all fields
+                                S = np.nanmin(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "max":
+                                # Take the min of all fields
+                                S = np.nanmax(Ss)
+                            elif edgeWeightMethod['multiFieldMethod'] == "mean":
+                                # Take the mean of all fields
+                                S = np.nanmean(Ss)
 
                         # Note that this weight contains node spacing information
                         # (i.e., change in node density with latitude and increased \
