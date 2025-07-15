@@ -470,13 +470,40 @@ def plotGlobalwHist(lat, lon, values,
 #import plotly.graph_objects as go
 class eaNodes():
 
-
-    def __init__(self, inputs={"undefined":True}):
+    def __init__(self, inputs={"undefined":True}, precalculated=False, precalculate=False):
         '''
-        Initiation of eaNodes class that is used for creating an irregular
-        grid of nodes that represent centroids are equal area diamond shape
-        regions on the surface of a sphere.
+        Initiation of eaNodes class that is used for creating a grid of
+        nodes that represent centroids of equal area diamond shape regions
+        on the surface of a sphere.
 
+        Parameters
+        -----------
+        inputs : DICTIONARY
+            inputs["resolution"] : FLOAT
+                Spatial resolution in degrees (i.e., node spacing)
+            inputs["dataGrid"] : STRING
+                Path to input data grid
+        precalculated : BOOLEAN
+            An option to read a precalculated set of node locations, connections,
+            and other eaNodes object defined values. The default is False.
+        precalculate : BOOLEAN
+            An option to write a precalculated set of node locations, connections,
+            and other eaNodes object defined values. The default is False.
+
+        Relevant Class Attributes
+        --------------------------
+        self.ealat : NUMPY VECTOR
+            Equal area node locations, latitude in degrees. 
+        self.ealon : NUMPY VECTOR
+            Equal area node locations, longitude in degrees.
+        self.connectionNodeDis : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 distance 3) connection 2 distance 4)
+            connection 3 distance, and 5) connection 4 distance.
+        self.connectionNodeIDs : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 3) connection 2 4) connection 3, and 5)
+            connection 4.
 
         '''
         # Assign inputs
@@ -492,26 +519,106 @@ class eaNodes():
         except:
             self.resolution = self.inputs["resolution"];
             self.dataGrid   = self.inputs["dataGrid"];
-        
-        self.filename1  = f'EA_Nodes_{self.resolution}_xyz.txt'
-        self.filename2  = f'EA_Nodes_{self.resolution}_LatLon.txt'
-        self.interpGrid = f'EA_Nodes_{self.resolution}_LatLon.txt';
-        self.output     = "EASampled.txt";
+
+        # Create directory to store precalculated files within
+        if not os.path.exists(os.getcwd()+"/eaNodes"):
+            os.mkdir(os.getcwd()+"/eaNodes")
+
+        # Assign more class attributes (filepaths)
+        self.filename1  = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_xyz.txt'
+        self.filename2  = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_LatLon.txt'
+        self.interpGrid = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_LatLon.txt';
+        self.output     = os.getcwd()+"/eaNodes/EASampled.txt";
 
 
         # Define all attributes assigned to object.
         self.color  = None; # Holds the colors used to distinguish between regions equal-area points on a sphere. 
-        self.ncfile = None; # 
         self.hist   = None; #
 
         # Equal area node locations
         self.ealon = None;  # Equal area node longitude
         self.ealat = None;  # Equal area node latitude
         
+        # Set read/write options
+        self.precalculated = precalculated;
+        self.precalculate  = precalculate;
+        
         # Equal area node interpolated data
         # This dictionary can be added to with self.interp2IrregularGrid(...). 
         self.data = {};
 
+        # Try to read precalculated node grid 
+        if self.precalculated:
+            self.precalculated = self.save_or_load_attributes(mode="r")
+
+
+    def save_or_load_attributes(self, mode="w"):
+        """
+        Save or load all class attributes to/from a single .npz file.
+
+        Parameter
+        ----------
+        mode : STRING
+            'w' to wrtie attributes, 'r' to read attributes.
+
+        File
+        -----
+            File will be named 'EA_Nodes_{self.resolution}.npz'
+        """
+        # Create filename
+        filename = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_xyz.txt'.replace("_xyz.txt", ".npz")
+
+        if mode == "w":
+            attr_dict = {
+                'inputs': self.inputs,
+                'resolution': self.resolution,
+                'dataGrid': self.dataGrid,
+                'interpGrid': self.interpGrid,
+                'output': self.output,
+                'filename1': self.filename1,
+                'filename2': self.filename2,
+                'color': self.color,
+                'hist': self.hist,
+                'ealon': self.ealon,
+                'ealat': self.ealat,
+                'data': self.data,
+                'connectionNodeIDs': self.connectionNodeIDs,
+                'connectionNodeDis': self.connectionNodeDis
+            }
+            # Save using numpy savez (allow_pickle needed for objects like dicts)
+            np.savez_compressed(filename, **attr_dict)
+            print(f"Attributes saved to {filename}")
+
+            return True
+
+        elif mode == "r":
+            if not os.path.exists(filename):
+                print(f"File {filename} does not exist. Cannot load. {filename} will be created for current use and written (precalculated) for future use at {self.resolution:0.1f} degree spatial resolution.")
+                return False
+
+            npzfile = np.load(filename, allow_pickle=True)
+
+            # Assign attributes from file
+            self.inputs = npzfile['inputs'].item()
+            self.resolution = npzfile['resolution'].item()
+            self.dataGrid = npzfile['dataGrid'].item()
+            self.interpGrid = npzfile['interpGrid'].item()
+            self.output = npzfile['output'].item()
+            self.filename1 = npzfile['filename1'].item()
+            self.filename2 = npzfile['filename2'].item()
+            self.color = npzfile['color']
+            self.hist = npzfile['hist'].item()
+            self.ealon = npzfile['ealon']
+            self.ealat = npzfile['ealat']
+            self.data = npzfile['data'].item()
+            self.connectionNodeIDs = npzfile['connectionNodeIDs']
+            self.connectionNodeDis = npzfile['connectionNodeDis']
+
+            print(f"Attributes loaded from {filename}")
+
+            return True
+        else:
+            print("Mode must be 'w' or 'r'.")
 
 
     def xyz2lonlat(self, x, y, z, radius=1):
@@ -580,12 +687,22 @@ class eaNodes():
 
     def makegrid(self, plotq=0):
         '''
+        Creates a 
         
         Re(defined)
         ------------
+        self.ealat : NUMPY VECTOR
+            Equal area node locations, latitude in degrees. 
+        self.ealon : NUMPY VECTOR
+            Equal area node locations, longitude in degrees.
+        self.connectionNodeDis : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 distance 3) connection 2 distance 4)
+            connection 3 distance, and 5) connection 4 distance.
         self.connectionNodeIDs : NUMPY ARRAY
             nodeCnt x 5 array with columns indicating 1) (nodei) with
-            2) connection 3) connection 4) connection, and 5) connection.
+            2) connection 1 3) connection 2 4) connection 3, and 5)
+            connection 4.
 
         '''
         nelsedge = 2 * int(np.ceil(54 / (2 * self.resolution)))
@@ -938,31 +1055,9 @@ class eaNodes():
             # Show the plot
             fig.show()
 
-    def sort_spherical_points(self, x, y, z):
-        """
-        Sorts points on a sphere from the North Pole to the South Pole.
-        If points have the same latitude, they are sorted by longitude.
-        
-        Parameters:
-        x, y, z : array-like
-            Cartesian coordinates of points on the sphere.
-        
-        Returns:
-        sorted_points : np.ndarray
-            Sorted (x, y, z) points as a NumPy array.
-        """
-        # Convert Cartesian to spherical coordinates
-        lat = np.degrees(np.arcsin(z / np.sqrt(x**2 + y**2 + z**2)))  # Latitude
-        lon = np.degrees(np.arctan2(y, x))  # Longitude
-        
-        # Combine into a structured array for sorting
-        points = np.array(list(zip(lat, lon, x, y, z)), dtype=[('lat', 'f8'), ('lon', 'f8'), ('x', 'f8'), ('y', 'f8'), ('z', 'f8')])
-        
-        # Sort by latitude (descending), then by longitude (ascending)
-        sorted_points = np.sort(points, order=['lat', 'lon'])[::-1]  # Reverse latitude for North-South ordering
-        
-        # Extract sorted x, y, z
-        return np.column_stack((sorted_points['x'], sorted_points['y'], sorted_points['z']))
+        # Write precalculated node grid 
+        if self.precalculate:
+            self.save_or_load_attributes(mode="w")
 
     def interp2IrregularGrid(self, path, name):
         """
@@ -995,7 +1090,6 @@ class eaNodes():
         # interpolated values (i.e., not result in an nan value when
         # a value does exist).
         os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
-        #os.system("gmt grdtrack -R-180/180/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
         
         # Nearest neighbor interpolation (needed to get values at north/south pole)
         #os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -nn -N > {2}".format(self.filename2, path, 'temp.txt'))
@@ -1004,7 +1098,38 @@ class eaNodes():
         self.data[name] = np.loadtxt('temp.txt', delimiter='\t',usecols=[2])
 
         # Delete temporary file
-        os.system('temp.txt');
+        os.system('rm temp.txt');
+
+    def sort_spherical_points(self, x, y, z):
+        """
+        Sorts points on a sphere from the North Pole to the South Pole.
+        If points have the same latitude, they are sorted by longitude.
+        
+        Parameters:
+        x, y, z : array-like
+            Cartesian coordinates of points on the sphere.
+        
+        Returns:
+        sorted_points : np.ndarray
+            Sorted (x, y, z) points as a NumPy array.
+        """
+
+        print("Unused and old function: remove")
+
+        return
+
+        # Convert Cartesian to spherical coordinates
+        lat = np.degrees(np.arcsin(z / np.sqrt(x**2 + y**2 + z**2)))  # Latitude
+        lon = np.degrees(np.arctan2(y, x))  # Longitude
+        
+        # Combine into a structured array for sorting
+        points = np.array(list(zip(lat, lon, x, y, z)), dtype=[('lat', 'f8'), ('lon', 'f8'), ('x', 'f8'), ('y', 'f8'), ('z', 'f8')])
+        
+        # Sort by latitude (descending), then by longitude (ascending)
+        sorted_points = np.sort(points, order=['lat', 'lon'])[::-1]  # Reverse latitude for North-South ordering
+        
+        # Extract sorted x, y, z
+        return np.column_stack((sorted_points['x'], sorted_points['y'], sorted_points['z']))
 
     def interpIrregularGrid(self, plotq):
 
@@ -1539,6 +1664,80 @@ class synthField():
         self.addShape(shape='circle', size=20, position=[100, 15], magnitude=10, verbose=False)
         self.plot(verbose=False);
 
+
+#######################################################################
+######################## Basin helper functions #######################
+#######################################################################
+
+
+import numpy as np
+import igraph as ig
+import leidenalg
+import louvain
+import ctypes
+import multiprocessing
+
+# Global variables to pass to worker
+_global_g = None
+_global_coassoc_base = None
+_global_n = None
+_global_resolution_parameter = None
+_global_weight_attr = None
+_global_method = None
+_global_partition_strategy = None
+
+def _CReduction_init_worker(g, coassoc_base, n, resolution_parameter, method, partition_strategy):
+    # Update global variable to initialize the _work
+    global _global_g, _global_coassoc_base, _global_n, _global_resolution_parameter, _global_method, _global_partition_strategy
+    _global_g = g
+    _global_coassoc_base = coassoc_base
+    _global_n = n
+    _global_resolution_parameter = resolution_parameter
+    _global_method = method
+    _global_partition_strategy = partition_strategy
+
+def _CReduction_worker(seed_i):
+    # Assign global variables to local worker
+    n = _global_n
+    g = _global_g
+    coassoc_base = _global_coassoc_base
+    resolution_parameter = _global_resolution_parameter
+    method = _global_method
+    partition_strategy = _global_partition_strategy
+
+    # Use one of two reduction methods
+    if method == "leiden":
+        part = leidenalg.find_partition(
+            g,
+            partition_strategy,
+            resolution_parameter=resolution_parameter,
+            weights=g.es["weight"],
+            seed=seed_i
+        )
+    elif method == "louvain":
+        part = louvain.find_partition(
+            g,
+            partition_strategy,
+            resolution_parameter=resolution_parameter,
+            weights=g.es["weight"],
+            seed=seed_i
+        )
+    else:
+        raise ValueError("Method must be 'leiden' or 'louvain'.")
+
+    # Define local array to add to co-association matrix
+    local = np.zeros((n, n), dtype=np.float64)
+    for community in part:
+        for u in community:
+            for v in community:
+                local[u, v] = 1.0
+
+    # Sum local matrix to co-association matrix
+    coassoc = np.ctypeslib.as_array(coassoc_base.get_obj()).reshape((n, n))
+    with coassoc_base.get_lock():
+        coassoc[:] += local
+
+
 #######################################################################
 ###################### Basin definition functions #####################
 #######################################################################
@@ -1768,9 +1967,20 @@ class BasinsEA():
             # -R specifies global extent (0 to 360 or -180 to 180, adjust as needed)
             # -I1d sets 1-degree spacing
             # -rp forces pixel registration
-            cmd = "gmt grdsample {0} -G{1} -I{2}d -rp -R-180/180/-90/90".format(input_grid,
-                                                                                output_grid,
-                                                                                self.Fields[ self.Fields['usedFields'][usedField] ]['resolution'])
+
+            # This is a very odd way to use a gmt grdsample call, this will create a 
+            # pixel registered mask of input_grid using nearest neighbor interpolation.
+            resolution = self.Fields[ self.Fields['usedFields'][usedField] ]['resolution']
+            cmd = "gmt grdsample {0} -G{1} -I{2}d -rg -nn -R{3}/{4}/{5}/{6}".format(input_grid,
+                                                                                            output_grid,
+                                                                                            resolution,
+                                                                                            -180+resolution/2,
+                                                                                             180-resolution/2,
+                                                                                             -90+resolution/2,
+                                                                                              90-resolution/2)
+            # cmd = "gmt grdsample {0} -G{1} -I{2}d -rp -R-181/181/-91/91".format(input_grid,
+            #                                                                     output_grid,
+            #                                                                     self.Fields[ self.Fields['usedFields'][usedField] ]['resolution'])
             # Execute the command
             os.system(cmd)
 
@@ -2047,13 +2257,16 @@ class BasinsEA():
             # eaPoint.lat, eaPoint.lon are created here
             # Note that only one eaNodes object is need for multiple fields.
             # Use the first used field to create the object
-            self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]] );
+            self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
+                                   precalculate=True,
+                                   precalculated=True);
 
             # Creates
             # 1) Set of nodes that represent equal area quadrangles.
             # 2) Define the connects between all nodes (even to nodes
             # with missing data)
-            self.eaPoint.makegrid(plotq=0);
+            if not self.eaPoint.precalculated:
+                self.eaPoint.makegrid(plotq=0);
 
             # Loop over all used fields
             for field in self.Fields['usedFields']:
@@ -4116,6 +4329,54 @@ class BasinsEA():
         None.        
         """
 
+        # Imports
+        import multiprocessing
+        import ctypes
+        import leidenalg
+        import louvain
+        
+        import igraph as ig
+        from sklearn.cluster import AgglomerativeClustering
+        from cdlib import NodeClustering
+
+        from collections import defaultdict
+        import itertools
+
+
+
+        # Assign defaults 
+
+        ## Set ensembleSize parameter. Set to 1 if not defined
+        try:
+            ensembleSize = detectionMethod['ensembleSize'];
+        except:
+            ensembleSize = 1;
+        try:
+            njobs = detectionMethod['njobs'];
+        except:
+            njobs = 1;
+        try:
+            detectionMethod['resolution'];
+        except:
+            detectionMethod['resolution'] = 1;
+
+        if (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
+            # Optimization Strategy
+            #OpStrat = leidenalg.CPMVertexPartition              # Constant potts model
+            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
+            OpStrat = leidenalg.RBConfigurationVertexPartition  # Modularity with resolution parameter
+
+        if (method=="Louvain") | (method=="Louvain-Girvan-Newman"):
+            # Optimization Strategy
+            #OpStrat = louvain.CPMVertexPartition                # Constant potts model
+            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
+            OpStrat = louvain.RBConfigurationVertexPartition;   # Modularity with resolution parameter
+
+
+        ########################
+        ### Helper Functions ###
+        ########################
+
         # Define function to find and return the node with 
         def mostCentralEdge(G):
             """
@@ -4135,31 +4396,283 @@ class BasinsEA():
             return max(centrality, key=centrality.get)
 
 
-        # Assign defaults 
+        # def consensus_louvain(graph_nx,
+        #                         resolution_parameter=1.0,
+        #                         weight_attr="bathyAve",
+        #                         runs=1,
+        #                         distance_threshold=0.3):
+        #     """
+        #     consensus_louvain is a function that creates a consensus
+        #     clustering from multiple Louvain runs with proper nod
+        #     name handling and configurable threshold.
 
-        ## Set ensembleSize parameter. Set to 1 if not defined
-        try:
-            ensembleSize = detectionMethod['ensembleSize'];
-        except:
-            ensembleSize = 1;
+        #     graph_nx : NETWORKX GRAPH
+        #         networkx constructed graph with nodes and edge
+        #         connections with variable 'weight_attr' defined.
+        #     resolution_parameter : FLOAT
+        #         Leiden resolution parameter. Values larger than
+        #         1 favor smaller (more) communities while a value
+        #         smaller than 1 favors larger (less) communities.
+        #     weight_attr : STRING
+        #         Name of the graph edge weight to use for
+        #         community calculation.
+        #     runs : INT
+        #         Number of Leiden used to create consensus.
+        #     distance_threshold : FLOAT
 
-        if (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
-            import leidenalg
-            # Optimization Strategy
-            #OpStrat = leidenalg.CPMVertexPartition              # Constant potts model
-            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
-            OpStrat = leidenalg.RBConfigurationVertexPartition  # Modularity with resolution parameter
+        #     """
+        #     # Stable node ordering
+        #     nodes = sorted(graph_nx.nodes())
+        #     n = len(nodes)
+        #     node_to_idx = {node: i for i, node in enumerate(nodes)}
+        #     idx_to_node = {i: node for node, i in node_to_idx.items()}
 
-        if (method=="Louvain") | (method=="Louvain-Girvan-Newman"):
-            import louvain
-            # Optimization Strategy
-            #OpStrat = louvain.CPMVertexPartition                # Constant potts model
-            #OpStrat = louvain.ModularityVertexPartition;        # Modularity with no resolution parameter
-            OpStrat = louvain.RBConfigurationVertexPartition;   # Modularity with resolution parameter
+        #     # Build weighted edge list with consistent node labels
+        #     edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+        #     g = ig.Graph()
+        #     g.add_vertices(n)
+        #     g.add_edges([(u, v) for u, v, w in edges])
+        #     g.es["weight"] = [w for _, _, w in edges]
+        #     g.vs["name"] = list(range(n))  # Stable index-named nodes
+
+        #     # Initialize co-association matrix
+        #     coassoc = np.zeros((n, n))
 
 
+        #     for i in range(runs):
+        #         part = louvain.find_partition(
+        #             g,
+        #             OpStrat,
+        #             resolution_parameter=resolution_parameter,
+        #             weights=g.es["weight"],
+        #             seed=i
+        #         )
+        #         for community in part:
+        #             for u in community:
+        #                 for v in community:
+        #                     coassoc[u, v] += 1
+
+        #     # Normalize co-association matrix
+        #     coassoc /= runs
+
+        #     # Convert to dissimilarity for clustering
+        #     distance = 1.0 - coassoc
+
+        #     # Use Agglomerative Clustering with better threshold control
+        #     model = AgglomerativeClustering(
+        #         metric="precomputed",
+        #         linkage="average",
+        #         distance_threshold=distance_threshold,
+        #         n_clusters=None
+        #     )
+        #     labels = model.fit_predict(distance)
+
+        #     # Group nodes by cluster labels
+        #     consensus_communities = [[] for _ in range(max(labels)+1)]
+        #     for idx, label in enumerate(labels):
+        #         consensus_communities[label].append(idx_to_node[idx])
+
+        #     # Convert to sets
+        #     consensus_communities = [set(c) for c in consensus_communities]
+
+        #     return NodeClustering(
+        #         communities=consensus_communities,
+        #         graph=graph_nx,
+        #         method_name="consensus_louvain_fixed",
+        #         method_parameters={
+        #             "resolution_parameter": resolution_parameter,
+        #             "runs": runs,
+        #             "distance_threshold": distance_threshold
+        #         }
+        #     )
+
+
+        # def consensus_leiden(graph_nx,
+        #                     resolution_parameter=1.0,
+        #                     weight_attr="bathyAve",
+        #                     runs=20,
+        #                     distance_threshold=0.25,
+        #                     OpStrat=OpStrat):
+        #     """
+        #     consensus_leiden is a function that creates a consensus
+        #     clustering from multiple Leiden runs with proper nod
+        #     name handling and configurable threshold.
+
+        #     graph_nx : NETWORKX GRAPH
+        #         networkx constructed graph with nodes and edge
+        #         connections with variable 'weight_attr' defined.
+        #     resolution_parameter : FLOAT
+        #         Leiden resolution parameter. Values larger than
+        #         1 favor smaller (more) communities while a value
+        #         smaller than 1 favors larger (less) communities.
+        #     weight_attr : STRING
+        #         Name of the graph edge weight to use for
+        #         community calculation.
+        #     runs : INT
+        #         Number of Leiden used to create consensus.
+        #     distance_threshold : FLOAT
+
+        #     """
+        #     # Stable node ordering
+        #     nodes = sorted(graph_nx.nodes())
+        #     n = len(nodes)
+        #     node_to_idx = {node: i for i, node in enumerate(nodes)}
+        #     idx_to_node = {i: node for node, i in node_to_idx.items()}
+
+        #     # Build weighted edge list with consistent node labels
+        #     edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+        #     g = ig.Graph()
+        #     g.add_vertices(n)
+        #     g.add_edges([(u, v) for u, v, w in edges])
+        #     g.es["weight"] = [w for _, _, w in edges]
+        #     g.vs["name"] = list(range(n))  # Stable index-named nodes
+
+        #     # Initialize co-association matrix
+        #     coassoc = np.zeros((n, n))
+
+
+        #     for i in range(runs):
+        #         part = leidenalg.find_partition(
+        #             g,
+        #             OpStrat,
+        #             resolution_parameter=resolution_parameter,
+        #             weights=g.es["weight"],
+        #             seed=i
+        #         )
+        #         for community in part:
+        #             for u in community:
+        #                 for v in community:
+        #                     coassoc[u, v] += 1
+
+        #     # Normalize co-association matrix
+        #     coassoc /= runs
+
+        #     # Convert to dissimilarity for clustering
+        #     distance = 1.0 - coassoc
+
+        #     # Use Agglomerative Clustering with better threshold control
+        #     model = AgglomerativeClustering(
+        #         metric="precomputed",
+        #         linkage="average",
+        #         distance_threshold=distance_threshold,
+        #         n_clusters=None
+        #     )
+        #     labels = model.fit_predict(distance)
+
+        #     # Group nodes by cluster labels
+        #     consensus_communities = [[] for _ in range(max(labels)+1)]
+        #     for idx, label in enumerate(labels):
+        #         consensus_communities[label].append(idx_to_node[idx])
+
+        #     # Convert to sets
+        #     consensus_communities = [set(c) for c in consensus_communities]
+
+        #     return NodeClustering(
+        #         communities=consensus_communities,
+        #         graph=graph_nx,
+        #         method_name="consensus_leiden_fixed",
+        #         method_parameters={
+        #             "resolution_parameter": resolution_parameter,
+        #             "runs": runs,
+        #             "distance_threshold": distance_threshold
+        #         }
+        #     )
+        def consensus_reduction_parallel_shared(graph_nx,
+                                            resolution_parameter=1.0,
+                                            weight_attr="bathyAve",
+                                            runs=1,
+                                            distance_threshold=0.3,
+                                            n_jobs=1,
+                                            partition_strategy=leidenalg.RBConfigurationVertexPartition,
+                                            method="leiden"):
+            """
+            Parallel consensus clustering supporting Leiden or Louvain.
+
+            Parameters
+            ----------
+            graph_nx : NETWORKX.GRAPH
+                Input graph.
+            resolution_parameter : FLOAT
+                Louvain/Leiden resolution parameter.
+            weight_attr : STRING
+                Edge weight attribute name.
+            runs : INT
+                Number of runs to generate consensus.
+            distance_threshold : FLOAT
+                Distance threshold for final clustering.
+            n_jobs : INT
+                Number of parallel workers.
+            partition_strategy : OBJECT
+                Partition strategy (Leiden) or partition type (Louvain).
+            method : STRING
+                "leiden" or "louvain". The default is "leiden"
+            """
+
+            nodes = sorted(graph_nx.nodes())
+            n = len(nodes)
+            node_to_idx = {node: i for i, node in enumerate(nodes)}
+            idx_to_node = {i: node for node, i in node_to_idx.items()}
+
+            edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
+            g = ig.Graph()
+            g.add_vertices(n)
+            g.add_edges([(u, v) for u, v, w in edges])
+            g.es["weight"] = [w for _, _, w in edges]
+            g.vs["name"] = list(range(n))
+
+            coassoc_base = multiprocessing.Array(ctypes.c_double, n * n, lock=True)
+
+            seeds = list(range(runs))
+            with multiprocessing.Pool(
+                processes=n_jobs,
+                initializer=_CReduction_init_worker,
+                initargs=(g, coassoc_base, n, resolution_parameter, method, partition_strategy)
+            ) as pool:
+                pool.map(_CReduction_worker, seeds)
+
+            coassoc = np.ctypeslib.as_array(coassoc_base.get_obj()).reshape((n, n))
+            coassoc /= runs
+
+            distance = 1.0 - coassoc
+            model = AgglomerativeClustering(
+                metric="precomputed",
+                linkage="average",
+                distance_threshold=distance_threshold,
+                n_clusters=None
+            )
+            labels = model.fit_predict(distance)
+
+            # Group nodes by cluster labels
+            consensus_communities = [[] for _ in range(max(labels)+1)]
+            for idx, label in enumerate(labels):
+                consensus_communities[label].append(idx_to_node[idx])
+            
+            # Convert to sets
+            consensus_communities = [set(c) for c in consensus_communities]
+
+            return NodeClustering(
+                communities=consensus_communities,
+                graph=graph_nx,
+                method_name=f"consensus_{method}_parallel_shared",
+                method_parameters={
+                    "resolution_parameter": resolution_parameter,
+                    "runs": runs,
+                    "distance_threshold": distance_threshold,
+                    "n_jobs": n_jobs,
+                    "partition_strategy": str(partition_strategy)
+                }
+            )
+
+
+        ###################################################
+        ### Community and Composite Community Detection ###
+        ###################################################
         if method=="Girvan-Newman":
-            # Run Girvan-Newman algorithm
+            ################################################
+            ### Girvan-Newman community detection method ###
+            ################################################
+
+            # GIRVAN-NEWMAN COMMUNITY DETECTION
             self.communities = list(nx.community.girvan_newman(self.G, most_valuable_edge=mostCentralEdge));
 
             # Choose interation of the algorithm that has at least
@@ -4173,278 +4686,52 @@ class BasinsEA():
             # Redefine the node community structure using Girvan Newman communities
             self.communitiesFinal = self.communities[interation];
 
-        if method=="Louvain-Girvan-Newman":
-            # Hierarchical community detection method 
-            #
-            # Imports
-            from collections import defaultdict
-            import itertools
-
-            # Perform a louvain community detection
-
-            ## Run Louvain community detection
-            Lcommunities = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=resolution, threshold=1e-12, seed=1)
-            self.Lcommunities = cp.deepcopy(Lcommunities)
-            self.LcommunitiesUnaltered = cp.deepcopy(Lcommunities);
-
-            ## Mapping from node to community index from Louvain community detection
-            node_to_comm = {}
-            for idx, comm in enumerate(Lcommunities):
-                for node in comm:
-                    node_to_comm[node] = idx
-            
-
-            # Construct new graph with Louvain community consolidated nodes
-            self.Gnew = nx.Graph()
-
-            # Add *all* communities as nodes, even if disconnected
-            self.Gnew.add_nodes_from(range(len(Lcommunities)))  # One node per community index
-
-            # Track summed weights between communities
-            edge_weights = defaultdict(float)
-
-            # Track unisolated louvain communities (communities that connect to other communities).
-            unisolatedCommunities = np.array([]);
-            smallCommunities = np.array([]);
-            if not minBasinLargerThanSmallMergers:
-                # Iterate over all edges in the original graph
-                for u, v, data in self.G.edges(data=True):
-                    cu = node_to_comm[u]
-                    cv = node_to_comm[v]
-                    weight = data.get('bathyAve', 1.0)
-
-                    if cu != cv:
-                        # Undirected: sort community pair to avoid duplicates
-                        edge = tuple(sorted((cu, cv)))
-                        edge_weights[edge] += weight
-
-                        # Tracks louvain community ids that connect to other communities
-                        if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
-                            unisolatedCommunities = np.append(unisolatedCommunities, cu)
-            elif minBasinLargerThanSmallMergers:
-                print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
-                # Get the area weights and basinID
-                # area = nx.get_node_attributes(self.G, "areaWeightm2")
-                
-                # basinID = nx.get_node_attributes(self.G, "basinID")
-
-                # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
-                # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
-
-                # # Sum areas with same basinIDs.
-                # sumCommunities = np.zeros(len(np.unique(basinIDList)))
-                # for i in range(len(np.unique(basinIDList))):
-                #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
-
-                # Get the area weights and basinID
-                area = nx.get_node_attributes(self.G, "areaWeightm2")
-                areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
-
-                # Sum areas with same basinIDs.
-                sumCommunities = np.zeros(len(self.Lcommunities))
-                for i in range(len(sumCommunities)):
-                    sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.Lcommunities[i]) ) ] )
-                
-                if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
-                    # Using % of spatial graph area
-
-                    # Define in percentage of total graph area.
-                    sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
-
-                    # Make list of communities that are larger than the smallest merged community
-                    smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
-
-                    # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
-                    # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
-                    # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
-                else:
-                    # Using absolute values of spatial graph area (i.e., m2)
-
-                    # Make list of communities that are larger than the smallest merged community
-                    smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
-            
-
-            # Communities that share no edge with other community
-            # Used for determining the number of unisolated communities
-            # when using the girvan-newman algorithm.
-            # print("\n\n\n\nsum(unisolatedCommunities): {}\n\n\n\n".format(np.sum(unisolatedCommunities)))
-            # print("\n\n\n\nunisolatedCommunities: {}\n\n\n\n".format(unisolatedCommunities) )
-            isolatedCommunitiesCnt = len(Lcommunities)- len(unisolatedCommunities)
-
-            # Add weighted edges to Gnew
-            for (cu, cv), edge_weight in edge_weights.items():
-                self.Gnew.add_edge(cu, cv, bathyAve=edge_weight)
-
-            # Apply Girvan–Newman algorithm to the simplified community graph
-            communityCnt = isolatedCommunitiesCnt + minBasinCnt
-            print("Louvain Communities ({0}), Target ({1}), Isolated Communities {2}".format(len(Lcommunities),communityCnt, isolatedCommunitiesCnt))
-            import time
-
-            timestamp1 = time.time();
-            comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
-            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            limited = itertools.takewhile(lambda c: len(c) <= communityCnt, comp)
-            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            for communities in limited:
-                GNcommunities = communities
-            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            self.GNcommunities = GNcommunities
-            
-            # Map each Girvan–Newman community to its Louvain community
-            louvain_to_gn = {}
-            for idx, comm in enumerate(GNcommunities):
-                for c in comm:
-                    louvain_to_gn[c] = idx
-            
-            # Map each original node to a Girvan–Newman community via its Louvain community
-            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            commNodes = [{} for _ in range(len(Lcommunities))]
-            for commL in louvain_to_gn:
-                commGN = louvain_to_gn[commL];
-                
-                #print(Lcommunities[commL])
-                try:
-                    # Do not comment out. If this code can run then commNodes[commGN]
-                    # has already been defined
-                    len(commNodes[commGN]);
-                    commNodes[commGN].update(Lcommunities[commL])
-                except:
-                    commNodes[commGN] = Lcommunities[commL]
-                
-            # Redefine the node community structure using Louvain & Girvan Newman composite communities
-            self.communitiesFinal = commNodes;
-
-            print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-
-        elif method=="Leiden-Girvan-Newman":
-            # Hierarchical community detection method 
-            #
-            # Imports
-            from collections import defaultdict
-            import itertools
-
-            ### START OF LEIDEN COMMUNITY DETECTION ###
-            import igraph as ig
-            import leidenalg
-            from sklearn.cluster import AgglomerativeClustering
-            from cdlib import NodeClustering
-
-
-            def consensus_leiden(graph_nx,
-                                 resolution_parameter=1.0,
-                                 weight_attr="bathyAve",
-                                 runs=20,
-                                 distance_threshold=0.25):
-                """
-                consensus_leiden is a function that creates a consensus
-                clustering from multiple Leiden runs with proper nod
-                name handling and configurable threshold.
-
-                graph_nx : NETWORKX GRAPH
-                    networkx constructed graph with nodes and edge
-                    connections with variable 'weight_attr' defined.
-                resolution_parameter : FLOAT
-                    Leiden resolution parameter. Values larger than
-                    1 favor smaller (more) communities while a value
-                    smaller than 1 favors larger (less) communities.
-                weight_attr : STRING
-                    Name of the graph edge weight to use for
-                    community calculation.
-                runs : INT
-                    Number of Leiden used to create consensus.
-                distance_threshold : FLOAT
-
-                """
-                # Stable node ordering
-                nodes = sorted(graph_nx.nodes())
-                n = len(nodes)
-                node_to_idx = {node: i for i, node in enumerate(nodes)}
-                idx_to_node = {i: node for node, i in node_to_idx.items()}
-
-                # Build weighted edge list with consistent node labels
-                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
-                g = ig.Graph()
-                g.add_vertices(n)
-                g.add_edges([(u, v) for u, v, w in edges])
-                g.es["weight"] = [w for _, _, w in edges]
-                g.vs["name"] = list(range(n))  # Stable index-named nodes
-
-                # Initialize co-association matrix
-                coassoc = np.zeros((n, n))
-
-
-                for i in range(runs):
-                    part = leidenalg.find_partition(
-                        g,
-                        OpStrat,
-                        resolution_parameter=resolution_parameter,
-                        weights=g.es["weight"],
-                        seed=i
-                    )
-                    for community in part:
-                        for u in community:
-                            for v in community:
-                                coassoc[u, v] += 1
-
-                # Normalize co-association matrix
-                coassoc /= runs
-
-                # Convert to dissimilarity for clustering
-                distance = 1.0 - coassoc
-
-                # Use Agglomerative Clustering with better threshold control
-                model = AgglomerativeClustering(
-                    metric="precomputed",
-                    linkage="average",
-                    distance_threshold=distance_threshold,
-                    n_clusters=None
-                )
-                labels = model.fit_predict(distance)
-
-                # Group nodes by cluster labels
-                consensus_communities = [[] for _ in range(max(labels)+1)]
-                for idx, label in enumerate(labels):
-                    consensus_communities[label].append(idx_to_node[idx])
-
-                # Convert to sets
-                consensus_communities = [set(c) for c in consensus_communities]
-
-                return NodeClustering(
-                    communities=consensus_communities,
-                    graph=graph_nx,
-                    method_name="consensus_leiden_fixed",
-                    method_parameters={
-                        "resolution_parameter": resolution_parameter,
-                        "runs": runs,
-                        "distance_threshold": distance_threshold
-                    }
-                )
-
-            # Set resolution parameter
-            resolution_parameter=resolution;
-
-            LDcommunities = consensus_leiden(self.G,
-                                             resolution_parameter=resolution_parameter,
+        elif (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
+            # LEDIAN COMMUNITY DETECTION
+            Rcommunities = consensus_reduction_parallel_shared(self.G,
+                                             resolution_parameter=detectionMethod['resolution'],
                                              distance_threshold=0.3,
-                                             runs=ensembleSize)
-            LDcommunities = LDcommunities.communities;
+                                             runs=ensembleSize,
+                                             n_jobs=njobs,
+                                             partition_strategy=OpStrat,
+                                             method="leiden")
 
-            self.LDcommunities = cp.deepcopy(LDcommunities)
-            self.LDcommunitiesUnaltered = cp.deepcopy(LDcommunities);
+            Rcommunities                = Rcommunities.communities;
+            self.Rcommunities           = cp.deepcopy(Rcommunities)
+            self.RcommunitiesUnaltered  = cp.deepcopy(Rcommunities);
+            self.communitiesFinal       = self.Rcommunities;
 
-            ### END OF LEIDEN COMMUNITY DETECTION ###
+        elif  (method=="Louvain") | (method=="Louvain-Girvan-Newman"):
+            # LOUVAIN COMMUNITY DETECTION
+            Rcommunities = consensus_reduction_parallel_shared(self.G,
+                                                            resolution_parameter=detectionMethod['resolution'],
+                                                            distance_threshold=0.3,
+                                                            runs=ensembleSize,
+                                                            n_jobs=njobs,
+                                                            partition_strategy=OpStrat,
+                                                            method="louvain")
 
-            ## Mapping from node to community index from Leiden community detection
+            Rcommunities                = Rcommunities.communities;
+            self.Rcommunities           = cp.deepcopy(Rcommunities)
+            self.RcommunitiesUnaltered  = cp.deepcopy(Rcommunities);
+            self.communitiesFinal       = self.Rcommunities;
+
+        else:
+            # Throw Error
+            print(f"{method} is set incorrectly. It needs to be either Louvain/Leiden/Louvain-Girvan-Newman/Leiden-Girvan-Newman/Girvan-Newman.")
+
+        if (method=="Leiden-Girvan-Newman") | (method=="Louvain-Girvan-Newman"):
+            ## Mapping from node to community index from reduced (Leiden/Louvain) community detection
             node_to_comm = {}
-            for idx, comm in enumerate(LDcommunities):
+            for idx, comm in enumerate(Rcommunities):
                 for node in comm:
                     node_to_comm[node] = idx
             
-            # Construct new graph with Leiden community consolidated nodes
+            # Construct new graph with reduced (Leiden/Louvain) community consolidated nodes
             self.Gnew = nx.Graph()
 
             # Add *all* communities as nodes, even if disconnected
-            self.Gnew.add_nodes_from(range(len(LDcommunities)))  # One node per community index
+            self.Gnew.add_nodes_from(range(len(Rcommunities)))  # One node per community index
 
             # Propagate and sum node attributes from self.G to self.Gnew
             node_attrs_to_sum = ['areaWeightm2']
@@ -4466,10 +4753,9 @@ class BasinsEA():
             # Track summed weights between communities
             edge_weights = defaultdict(float)
 
-            # Track unisolated Leiden communities (communities that connect to other communities).
+            # Track unisolated reduced (Leiden/Louvain) communities (communities that connect to other communities).
             unisolatedCommunities = np.array([]);
             smallCommunities = np.array([]);
-            #if not minBasinLargerThanSmallMergers:
             # Iterate over all edges in the original graph
             for u, v, data in self.G.edges(data=True):
                 cu = node_to_comm[u]
@@ -4481,81 +4767,12 @@ class BasinsEA():
                     edge = tuple(sorted((cu, cv)))
                     edge_weights[edge] += weight
 
-                    # # Tracks louvain community ids that connect to other communities
-                    # if (unisolatedCommunities != cu).all() | (len(unisolatedCommunities)==0):
-                    #     unisolatedCommunities = np.append(unisolatedCommunities, cu)
-            # elif minBasinLargerThanSmallMergers:
-            #     # print("\n\n\n\nminBasinLargerThanSmallMergers1\n\n\n\n")
-            #     # Get the area weights and basinID
-            #     # area = nx.get_node_attributes(self.G, "areaWeightm2")
-                
-            #     # basinID = nx.get_node_attributes(self.G, "basinID")
-
-            #     # basinIDList = np.array( [basinID[idx]['basinID'] for idx in nx.get_node_attributes(self.G, "basinID")] )
-            #     # areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "basinID")] )
-
-            #     # # Sum areas with same basinIDs.
-            #     # sumCommunities = np.zeros(len(np.unique(basinIDList)))
-            #     # for i in range(len(np.unique(basinIDList))):
-            #     #     sumCommunities[int(i)] = np.sum(areaList[i==basinIDList])
-
-            #     # Get the area weights and basinID
-            #     area = nx.get_node_attributes(self.G, "areaWeightm2")
-            #     areaList = np.array( [area[idx] for idx in nx.get_node_attributes(self.G, "areaWeightm2")] )
-
-            #     # Sum areas with same basinIDs.
-            #     sumCommunities = np.zeros(len(self.LDcommunities))
-            #     for i in range(len(sumCommunities)):
-            #         sumCommunities[int(i)] = np.sum( areaList[ np.array( list(self.LDcommunities[i]) ) ] )
-                
-            #     if detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod'] == "%":
-            #         # Using % of spatial graph area
-
-            #         # Define in percentage of total graph area.
-            #         sumCommunitiesPercentage = 100*sumCommunities/np.sum(sumCommunities)
-
-            #         # Make list of communities that are larger than the smallest merged community
-            #         smallCommunities = ( sumCommunitiesPercentage>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
-
-            #         # print("\n\n\n\nminBasinLargerThanSmallMergers2\n\n\n\n")
-            #         # print("np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold'])\n", np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']))
-            #         # print("\nsumCommunitiesPercentage\n",sumCommunitiesPercentage)
-            #     else:
-            #         # Using absolute values of spatial graph area (i.e., m2)
-
-            #         # Make list of communities that are larger than the smallest merged community
-            #         smallCommunities = ( sumCommunities>np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']) )
-            
-
-            # Communities that share no edge with other community
-            # Used for determining the number of unisolated communities
-            # when using the girvan-newman algorithm.
-            # print("\n\n\n\nsum(unisolatedCommunities): {}\n\n\n\n".format(np.sum(unisolatedCommunities)))
-            # print("\n\n\n\nunisolatedCommunities: {}\n\n\n\n".format(unisolatedCommunities) )
-            #isolatedCommunitiesCnt = len(LDcommunities)- len(unisolatedCommunities)
-
             # Add weighted edges to Gnew
             for (cu, cv), edge_weight in edge_weights.items():
                 self.Gnew.add_edge(cu, cv, bathyAve=edge_weight)
 
             # Apply Girvan–Newman algorithm to the simplified community graph
-            # communityCnt = isolatedCommunitiesCnt + minBasinCnt
-            # print("Leiden Communities ({0}), Target ({1}), Isolated Communities {2}".format(len(LDcommunities),communityCnt, isolatedCommunitiesCnt))
-            # import time
-            # timestamp1 = time.time();
-            # comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
-            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            # limited = itertools.takewhile(lambda c: len(c) <= communityCnt, comp)
-            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            # for communities in limited:
-            #     GNcommunities = communities
-            # print( "Time: {} seconds".format(timestamp1-time.time()) ); timestamp1 = time.time();
-            # self.GNcommunities = GNcommunities
-
-            # Apply Girvan–Newman algorithm to the simplified community graph
             comp = nx.community.girvan_newman(self.Gnew, most_valuable_edge=mostCentralEdge)
-            
-
             
 
             if minBasinLargerThanSmallMergers:
@@ -4564,6 +4781,7 @@ class BasinsEA():
 
                 # Define attribute to merge
                 node_attr = 'areaWeightm2'
+
                 # Find total global area
                 GlobalArea = sum(self.Gnew.nodes[n].get(node_attr, 0.0) for n in self.Gnew.nodes);
                 
@@ -4593,7 +4811,7 @@ class BasinsEA():
                     if large_comm_count >= detectionMethod['minBasinCnt']:
                         # print("Final: large_comm_count, detectionMethod['minBasinCnt']", large_comm_count, detectionMethod['minBasinCnt'])
                         GNcommunities = community_list
-                        break            
+                        break
             else:                
                 # Remove merge communities until detectionMethod['mergerPackage']['minBasinCnt'] is reached
                 limited = itertools.takewhile(lambda c: len(c) <= detectionMethod['minBasinCnt'], comp)
@@ -4603,263 +4821,33 @@ class BasinsEA():
             # Assign the Girvan-Newman community structure to a class attribute. 
             self.GNcommunities = GNcommunities
 
-
-            
-            # Map each Girvan–Newman community to its Leiden community
-            louvain_to_gn = {}
+            # Map each Girvan–Newman community to its reduced (Leiden/Louvain) community
+            reduced_to_gn = {}
             for idx, comm in enumerate(GNcommunities):
                 for c in comm:
-                    louvain_to_gn[c] = idx
+                    reduced_to_gn[c] = idx
             
-            # Map each original node to a Girvan–Newman community via its Leiden community
-            commNodes = [{} for _ in range(len(LDcommunities))]
-            for commL in louvain_to_gn:
-                commGN = louvain_to_gn[commL];
+            # Map each original node to a Girvan–Newman community via its reduced (Leiden/Louvain) community
+            commNodes = [{} for _ in range(len(Rcommunities))]
+            for commL in reduced_to_gn:
+                commGN = reduced_to_gn[commL];
                 
-                #print(LDcommunities[commL])
                 try:
                     # Do not comment out. If this code can run then commNodes[commGN]
                     # has already been defined
                     len(commNodes[commGN]);
-                    commNodes[commGN].update(LDcommunities[commL])
+                    commNodes[commGN].update(Rcommunities[commL])
                 except:
-                    commNodes[commGN] = LDcommunities[commL]
+                    commNodes[commGN] = Rcommunities[commL]
                 
-            # Redefine the node community structure using Leiden & Girvan Newman composite communities
+            # Redefine the node community structure using reduced (Leiden/Louvain) & Girvan Newman composite communities
             self.communitiesFinal = commNodes;
 
 
-        elif method=="Leiden":
-            import igraph as ig
-            import leidenalg
-            from sklearn.cluster import AgglomerativeClustering
-            from cdlib import NodeClustering
-
-            def consensus_leiden(graph_nx,
-                                 resolution_parameter=1.0,
-                                 weight_attr="bathyAve",
-                                 runs=20,
-                                 distance_threshold=0.25):
-                """
-                consensus_leiden is a function that creates a consensus
-                clustering from multiple Leiden runs with proper nod
-                name handling and configurable threshold.
-
-                graph_nx : NETWORKX GRAPH
-                    networkx constructed graph with nodes and edge
-                    connections with variable 'weight_attr' defined.
-                resolution_parameter : FLOAT
-                    Leiden resolution parameter. Values larger than
-                    1 favor smaller (more) communities while a value
-                    smaller than 1 favors larger (less) communities.
-                weight_attr : STRING
-                    Name of the graph edge weight to use for
-                    community calculation.
-                runs : INT
-                    Number of Leiden used to create consensus.
-                distance_threshold : FLOAT
-
-                """
-                # Stable node ordering
-                nodes = sorted(graph_nx.nodes())
-                n = len(nodes)
-                node_to_idx = {node: i for i, node in enumerate(nodes)}
-                idx_to_node = {i: node for node, i in node_to_idx.items()}
-
-                # Build weighted edge list with consistent node labels
-                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
-                g = ig.Graph()
-                g.add_vertices(n)
-                g.add_edges([(u, v) for u, v, w in edges])
-                g.es["weight"] = [w for _, _, w in edges]
-                g.vs["name"] = list(range(n))  # Stable index-named nodes
-
-                # Initialize co-association matrix
-                coassoc = np.zeros((n, n))
-
-
-                for i in range(runs):
-                    part = leidenalg.find_partition(
-                        g,
-                        OpStrat,
-                        resolution_parameter=resolution_parameter,
-                        weights=g.es["weight"],
-                        seed=i
-                    )
-                    for community in part:
-                        for u in community:
-                            for v in community:
-                                coassoc[u, v] += 1
-
-                # Normalize co-association matrix
-                coassoc /= runs
-
-                # Convert to dissimilarity for clustering
-                distance = 1.0 - coassoc
-
-                # Use Agglomerative Clustering with better threshold control
-                model = AgglomerativeClustering(
-                    metric="precomputed",
-                    linkage="average",
-                    distance_threshold=distance_threshold,
-                    n_clusters=None
-                )
-                labels = model.fit_predict(distance)
-
-                # Group nodes by cluster labels
-                consensus_communities = [[] for _ in range(max(labels)+1)]
-                for idx, label in enumerate(labels):
-                    consensus_communities[label].append(idx_to_node[idx])
-
-                # Convert to sets
-                consensus_communities = [set(c) for c in consensus_communities]
-
-                return NodeClustering(
-                    communities=consensus_communities,
-                    graph=graph_nx,
-                    method_name="consensus_leiden_fixed",
-                    method_parameters={
-                        "resolution_parameter": resolution_parameter,
-                        "runs": runs,
-                        "distance_threshold": distance_threshold
-                    }
-                )
-
-
-            # Set resolution parameter
-            resolution_parameter=resolution;
-
-            LDcommunities = consensus_leiden(self.G,
-                                             resolution_parameter=resolution_parameter,
-                                             distance_threshold=0.3,
-                                             runs=ensembleSize)
-            LDcommunities = LDcommunities.communities;
-
-            self.LDcommunities = cp.deepcopy(LDcommunities)
-            self.LDcommunitiesUnaltered = cp.deepcopy(LDcommunities);
-
-            self.communitiesFinal = self.LDcommunities;
-
-            print("len(LDcommunities)", len(LDcommunities))
-
-        elif  method=="Louvain":
-            import igraph as ig
-            import louvain
-            from sklearn.cluster import AgglomerativeClustering
-            from cdlib import NodeClustering
-
-            def consensus_louvain(graph_nx,
-                                 resolution_parameter=1.0,
-                                 weight_attr="bathyAve",
-                                 runs=20,
-                                 distance_threshold=0.25):
-                """
-                consensus_louvain is a function that creates a consensus
-                clustering from multiple Louvain runs with proper nod
-                name handling and configurable threshold.
-
-                graph_nx : NETWORKX GRAPH
-                    networkx constructed graph with nodes and edge
-                    connections with variable 'weight_attr' defined.
-                resolution_parameter : FLOAT
-                    Leiden resolution parameter. Values larger than
-                    1 favor smaller (more) communities while a value
-                    smaller than 1 favors larger (less) communities.
-                weight_attr : STRING
-                    Name of the graph edge weight to use for
-                    community calculation.
-                runs : INT
-                    Number of Leiden used to create consensus.
-                distance_threshold : FLOAT
-
-                """
-                # Stable node ordering
-                nodes = sorted(graph_nx.nodes())
-                n = len(nodes)
-                node_to_idx = {node: i for i, node in enumerate(nodes)}
-                idx_to_node = {i: node for node, i in node_to_idx.items()}
-
-                # Build weighted edge list with consistent node labels
-                edges = [(node_to_idx[u], node_to_idx[v], d.get(weight_attr, 1.0)) for u, v, d in graph_nx.edges(data=True)]
-                g = ig.Graph()
-                g.add_vertices(n)
-                g.add_edges([(u, v) for u, v, w in edges])
-                g.es["weight"] = [w for _, _, w in edges]
-                g.vs["name"] = list(range(n))  # Stable index-named nodes
-
-                # Initialize co-association matrix
-                coassoc = np.zeros((n, n))
-
-
-                for i in range(runs):
-                    part = louvain.find_partition(
-                        g,
-                        OpStrat,
-                        resolution_parameter=resolution_parameter,
-                        weights=g.es["weight"],
-                        seed=i
-                    )
-                    for community in part:
-                        for u in community:
-                            for v in community:
-                                coassoc[u, v] += 1
-
-                # Normalize co-association matrix
-                coassoc /= runs
-
-                # Convert to dissimilarity for clustering
-                distance = 1.0 - coassoc
-
-                # Use Agglomerative Clustering with better threshold control
-                model = AgglomerativeClustering(
-                    metric="precomputed",
-                    linkage="average",
-                    distance_threshold=distance_threshold,
-                    n_clusters=None
-                )
-                labels = model.fit_predict(distance)
-
-                # Group nodes by cluster labels
-                consensus_communities = [[] for _ in range(max(labels)+1)]
-                for idx, label in enumerate(labels):
-                    consensus_communities[label].append(idx_to_node[idx])
-
-                # Convert to sets
-                consensus_communities = [set(c) for c in consensus_communities]
-
-                return NodeClustering(
-                    communities=consensus_communities,
-                    graph=graph_nx,
-                    method_name="consensus_louvain_fixed",
-                    method_parameters={
-                        "resolution_parameter": resolution_parameter,
-                        "runs": runs,
-                        "distance_threshold": distance_threshold
-                    }
-                )
-
-
-            # Set resolution parameter
-            resolution_parameter=resolution;
-
-            Lcommunities  = consensus_louvain(self.G,
-                                             resolution_parameter=resolution_parameter,
-                                             distance_threshold=0.3,
-                                             runs=ensembleSize)
-            Lcommunities  = Lcommunities.communities;
-
-            self.Lcommunities          = cp.deepcopy(Lcommunities)
-            self.LcommunitiesUnaltered = cp.deepcopy(Lcommunities);
-
-            self.communitiesFinal = self.Lcommunities;
-            print("Louvain CD")
-
-        else:
-            # Redefine the node community structure using Louvain communities
-            self.communitiesFinal = nx.community.louvain_communities(self.G, weight='bathyAve', resolution=resolution, threshold=1e-12, seed=1)
-
-        # Set node attribute (basinIDs)
-
+        #####################################
+        ### Set node attribute (basinIDs) ###
+        #####################################
+        
         ## Set the amount of unique basinIDs equal to the count
         ## of unique communities that the Girvan-Newman or Louvain
         ## algorithm found. This is not always equal to the minBasinCnt 
@@ -9330,6 +9318,14 @@ def haversine_distance(lat1, lon1, lat2, lon2, radius):
     dlat = lat2 - lat1
     dlon = lon2 - lon1
     a = np.sin(dlat / 2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2)**2
+    
+    # Numerical issues can cause points that are on top of one another to
+    # be assigned negative a values. This ensures a is always equal to or
+    # greater than 0.
+    # if np.size(a) != 1:
+    #     a[a<0] = 0;
+    # elif a<0:
+    #     a = 0;
 
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     

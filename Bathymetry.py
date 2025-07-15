@@ -253,7 +253,15 @@ class BathyMeasured():
         self.data_dir = data_dir;
 
         # Define the resampled topography output file name.
-        resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.0f}deg.nc".format(data_dir,  self.model, new_resolution);
+        if new_resolution == int(new_resolution):
+            resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.0f}deg.nc".format(data_dir,  self.model, new_resolution);
+        elif new_resolution*10 == int(new_resolution*10):
+            resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.1f}deg.nc".format(data_dir,  self.model, new_resolution);
+        else:
+            new_resolution = round(new_resolution,1);
+            self.new_resolution = new_resolution;
+            print("Resolution was set to: {} degrees".format(self.new_resolution))
+            resampledTopoPath = "{0}/topographies/{1}/{1}_resampled_{2:0.1f}deg.nc".format(data_dir,  self.model, new_resolution);
 
         # If the resampled topography model already exists then read model
         # instead of continuing.
@@ -707,7 +715,11 @@ class BathyMeasured():
                                      verbose=verbose)     
         
         # Set netCDF4 filename
-        BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        if self.resolution == int(self.resolution):
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        elif self.resolution*10 == int(self.resolution*10):
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        #BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
         
         # Make new .nc file
         ncfile = Dataset(BathyPath, mode='w', format='NETCDF4_CLASSIC') 
@@ -807,7 +819,11 @@ class BathyMeasured():
 
         """
 
-        BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        if self.resolution == int(self.resolution):
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        elif self.resolution*10 == int(self.resolution*10):
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+        #BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
         
         # Make new .nc file
         self.bathync = Dataset(BathyPath, mode='r', format='NETCDF4_CLASSIC') 
