@@ -214,6 +214,18 @@ def areaWeights(resolution = 1, radius = 6371e3, LonStEd = [-180,180], LatStEd =
     # Create vectors throughout domains and along dimensions
     Y = np.arange(LatStEd[1]-resolution/2, LatStEd[0]-resolution/2, -resolution);
     X = np.arange(LonStEd[0]+resolution/2, LonStEd[1]+resolution/2, resolution);
+    if (Y[0] != -Y[-1]) & (LatStEd[1] == -1*LatStEd[0]):
+        Y = np.array([resolution/2, -resolution/2])
+        while (Y[0]+resolution)<90:
+            Y = np.append( Y[0]+resolution, Y)
+        while -90 < (Y[-1]-resolution):
+            Y = np.append( Y, Y[-1]-resolution)
+    if (X[0] != -X[-1]) & (LonStEd[1] == -1*LonStEd[0]):
+        X = np.array([-resolution/2, resolution/2])
+        while -180<(X[0]-resolution):
+            X = np.append( X[0]-resolution, X)
+        while (X[-1]+resolution)<180:
+            X = np.append( X, X[-1]+resolution)
 
     # Create meshgrid of latitude and longitudes.
     longitudes, latitudes = np.meshgrid(X,Y);
@@ -229,7 +241,7 @@ def areaWeights(resolution = 1, radius = 6371e3, LonStEd = [-180,180], LatStEd =
 
     if verbose:
         import matplotlib.pyplot as plt
-        
+        #FIXME: Add plotGlobal Function
         ...
 
     return areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated
@@ -263,6 +275,10 @@ def cellAreaOnSphere(clat, resolution = 1., radius=6371e3):
 #######################################################################
 ################ Plotting function, might not be used #################
 #######################################################################
+
+
+import copy as cp
+import cartopy.crs as ccrs # type: ignore
 
 def plotGlobal(lat, lon, values,
                outputDir = os.getcwd(),
@@ -305,6 +321,198 @@ def plotGlobal(lat, lon, values,
     -------
     None.
     """
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=ccrs.Mollweide())
+
+    ## Set if the mesh should be plotted
+    try: 
+        pltOpts["mesh"];
+    except:
+        pltOpts["mesh"] = True;
+        
+    ## Set if solid polygons should be plotted for nan values.
+    try:
+        pltOpts["nanSolidPoly"];
+    except:
+        pltOpts["nanSolidPoly"] = False;
+    try:
+        pltOpts["nanSolidPolyOutline"];
+    except:
+        pltOpts["nanSolidPolyOutline"] = False;
+
+    ## Set if the coastline should be plotted
+    try: 
+        pltOpts["coastlines"];
+    except:
+        pltOpts["coastlines"] = False;
+
+    ## Add the plot using pcolormesh
+    if pltOpts["mesh"]:
+        mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                            vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
+                            zorder=0)
+
+    ## Add zero contour value
+    try:
+        if pltOpts["plotZeroContour"]:
+            # Set any np.nan values to 0.ccrs
+            values[np.isnan(values)] = 0;
+            zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+    except:
+        # Case where pltOpts["plotZeroContour"] was not defined
+        pass
+
+    ## Add solid polygons for nan values
+    try:
+        if pltOpts["nanSolidPoly"]:
+            valuesNan                   = cp.deepcopy(values)
+            valuesNan[:]                = np.nan;
+            valuesNan[np.isnan(values)] = 1;
+            mesh2 = ax.pcolormesh(lon, lat, valuesNan,
+                                  transform=ccrs.PlateCarree(),
+                                  cmap='YlOrRd',
+                                  vmin=0, vmax=3, zorder=1)
+    except:
+        # Case where pltOpts["nanSolidPoly"] was not defined
+        pass
+    
+    ## Add Line around clusters of nan values
+    try:
+        if pltOpts["nanSolidPolyOutline"]:
+            valuesNan                   = cp.deepcopy(values)
+            valuesNan[:]                = 0;
+            valuesNan[np.isnan(values)] = 1;
+            nanContour = ax.contour(lon, lat, valuesNan,
+                                    levels=[1/2],
+                                    colors='blue',
+                                    linewidths=1.1,
+                                    transform=ccrs.PlateCarree(),
+                                    zorder=2)
+    except:
+        # Case where pltOpts["nanSolidPoly"] was not defined
+        pass
+
+    ## Add contours in integer steps (useful for dividing catagorical data)
+#     try:
+#         valuesContour = cp.deepcopy(values)
+#         if pltOpts["plotIntegerContours"]:
+#             # Set any np.nan values to 0.
+#             values[np.isnan(values)] = -1;
+#             zeroContour = ax.contour(lon, lat, values,
+#                                      levels=np.arange(len(np.unique(values)))-1/2,
+#                                      colors='black',
+#                                      linewidths=1,
+#                                      transform=ccrs.PlateCarree(),
+#                                      zorder=0)
+#     except:
+#         # Case where pltOpts["plotIntegerContours"] was not defined
+#         pass
+    try:
+        valuesContour = cp.deepcopy(values)
+        if pltOpts["plotIntegerContours"]:
+            # Set any np.nan values to 0.
+            for i in range(len(np.unique(values))):
+                valuesContour[values==i] = 1;
+                valuesContour[values!=i] = 0;
+                ax.contour(lon, lat, valuesContour,
+                           levels=[1/2],
+                           colors='black',
+                           linewidths=1,
+                           transform=ccrs.PlateCarree(),
+                           zorder=0)
+    except:
+        # Case where pltOpts["plotIntegerContours"] was not defined
+        pass
+
+    ## Add coastlines
+    if pltOpts["coastlines"]:
+        ax.coastlines(color='blue', linewidth=1, zorder=10)
+
+    ## Add a colorbar
+    if pltOpts["mesh"]:
+        cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+        cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    ax.gridlines()
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    ## Set transparency value
+    try:
+        pltOpts["transparent"];
+    except:
+        pltOpts["transparent"] = False;
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=600, transparent=pltOpts["transparent"])
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+
+
+
+def plotRegional(lat, lon, values,
+               outputDir = os.getcwd(),
+               fidName = "plotRegional.png",
+               cmapOpts={"cmap":"viridis",
+                         "cbar-title":"cbar-title",
+                         "cbar-range":[0,1]},
+               pltOpts={"valueType": "Bathymetry",
+                        "valueUnits": "m",
+                        "plotTitle":"",
+                        "plotZeroContour":False,
+                        "plotIntegerContours":False,
+                        "transparent":False,
+                        "Region":[-180,180,-90,90]},
+               saveSVG=False,
+               savePNG=False):
+    """
+    plotRegional function is used to plot global ranging datasets that
+    are represented with evenly spaced latitude and longitude values on
+    a regional map.
+
+    Parameters
+    ----------
+    lat : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    lon : NUMPY ARRAY
+        nx2n array representing cell registered longitudes, in deg,
+        ranging from [-180, 180]. Longitudes change from column to column.
+    Values : NUMPY ARRAY
+        nx2n array representing cell registered geographic data, in [-] units.
+    cmapOpts : DICTIONARY
+        A set of options to format the color map and bar for the plot
+    pltOpts : DICTIONARY
+        A set of options to format the plot. Defaults to plotting a
+        global map.
+    saveSVG : BOOLEAN
+        An option to save an SVG output. The default is False.
+    savePNG : BOOLEAN
+        An option to save an PNG output. The default is False.
+
+    Returns
+    -------
+    None.
+    """
+    # FIXME: 
+    print("working progress")
+    return
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
     # Start making figure
     ## Create a figure
     fig = plt.figure(figsize=(10, 5))
@@ -462,6 +670,88 @@ def plotGlobalwHist(lat, lon, values,
         plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
 
 
+def plotLargeBasins(basins, fieldNum="Field1", percentage=0.05, fldName=os.getcwd(), savePNG=False, verbose=True):
+    """
+    Function is use to plot basins larger than X% of surface area of
+    where data is represented.
+    
+    Parameters
+    -----------
+    basins : EXOCCYCLE OBJECT
+        Includes lat, lon, BasinIDA, and Fields attributes.
+    fieldNum : STRING
+        Name of field to plot. Information of the
+        field is stored in basins.Fields[{FieldNum}].
+        The default is Field 1.
+    percentage : percentage
+        Decimal percentage of area that the community
+        must cover such that it is plotted. The default
+        is 5 %.
+    fldName : STRING
+        Directory to store plotted png image within.
+        The default is the current working directory.
+    savePNG : BOOLEAN
+        Option to save png of plotted large basins.
+        The default is False
+    verbose : BOOLEAN
+        Outputs additional information on communities to be
+        plotted. The default is True.
+        
+    Returns
+    --------
+    None.
+    
+    """
+    BasinIDAMod = cp.deepcopy(basins.BasinIDA)
+    # Make weights mask
+    areaWeights = cp.deepcopy(basins.areaWeights)
+    areaWeights[np.isnan(basins.BasinIDA)] = 0;
+    TotalArea = np.nansum(areaWeights)
+    if verbose:
+        print(f"TotalArea: {TotalArea}")
+    
+    # Iterate over basins (communitieslen()
+    keepBasin = np.ones(len(np.unique(BasinIDAMod)))
+    for basinID in np.unique(BasinIDAMod):
+        if np.isnan(basinID):
+            continue;
+        if np.sum(areaWeights[BasinIDAMod==basinID]) < TotalArea*percentage:
+            # If total basin area is smaller than the percentage threshold. 
+            keepBasin[int(basinID)] = 0;
+            if verbose:
+                print(f"basinID: {basinID}")
+    if verbose:
+        print(f"Smallest community plotted {TotalArea*percentage} km^2" )
+        print(f"Basins to be plotted (>100 will take more than a minute): {np.sum(keepBasin)}")
+        
+    # Remove small basins
+    print(f"len(np.unique(BasinIDAMod)): {len(np.unique(BasinIDAMod))}")
+    for basinID in range(len(keepBasin)):
+        if not keepBasin[basinID]:
+            BasinIDAMod[BasinIDAMod==basinID] = np.nan;
+
+    # Reindex large basins basins
+    cnt=0;
+    for basinID in np.unique(BasinIDAMod):
+        BasinIDAMod[BasinIDAMod==basinID] = cnt
+        cnt+=1
+        
+    # Plot
+    plotGlobal(basins.lat, basins.lon, BasinIDAMod,
+               outputDir = fldName,
+               fidName = "plotGlobal_LargeBasins.png",
+               cmapOpts={"cmap":"jet",
+                         "cbar-title":"cbar-title",
+                         "cbar-range":[0,np.nanmax(BasinIDAMod)]},
+               pltOpts={"valueType": "BasinID divided by {}".format(basins.Fields[fieldNum]['parameterName']),
+                        "valueUnits": "-",
+                        "plotTitle":"",
+                        "plotZeroContour":False,
+                        "plotIntegerContours":True,
+                        "transparent":True},
+               savePNG=savePNG,
+               saveSVG=False)
+
 
 #######################################################################
 ###################### Basin definition functions #####################
@@ -595,6 +885,8 @@ class eaNodes():
             if not os.path.exists(filename):
                 print(f"File {filename} does not exist. Cannot load. {filename} will be created for current use and written (precalculated) for future use at {self.resolution:0.1f} degree spatial resolution.")
                 return False
+            
+            print(f"File {filename} does exist. loading. {filename} will be read for current use.")
 
             npzfile = np.load(filename, allow_pickle=True)
 
@@ -602,10 +894,10 @@ class eaNodes():
             self.inputs = npzfile['inputs'].item()
             self.resolution = npzfile['resolution'].item()
             self.dataGrid = npzfile['dataGrid'].item()
-            self.interpGrid = npzfile['interpGrid'].item()
-            self.output = npzfile['output'].item()
-            self.filename1 = npzfile['filename1'].item()
-            self.filename2 = npzfile['filename2'].item()
+            #self.interpGrid = npzfile['interpGrid'].item()
+            #self.output = npzfile['output'].item()
+            #self.filename1 = npzfile['filename1'].item()
+            #self.filename2 = npzfile['filename2'].item()
             self.color = npzfile['color']
             self.hist = npzfile['hist'].item()
             self.ealon = npzfile['ealon']
@@ -614,6 +906,15 @@ class eaNodes():
             self.connectionNodeIDs = npzfile['connectionNodeIDs']
             self.connectionNodeDis = npzfile['connectionNodeDis']
 
+            # Assign more class attributes (filepaths)
+            # These are not defined with the values stored in the
+            # .npz file since the .npz file might have been constructed
+            # on a different system.
+            self.filename1  = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_xyz.txt'
+            self.filename2  = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_LatLon.txt'
+            self.interpGrid = os.getcwd()+"/eaNodes/"+f'EA_Nodes_{self.resolution:0.1f}_LatLon.txt';
+            self.output     = os.getcwd()+"/eaNodes/EASampled.txt";
+
             print(f"Attributes loaded from {filename}")
 
             return True
@@ -621,29 +922,6 @@ class eaNodes():
             print("Mode must be 'w' or 'r'.")
 
 
-    def xyz2lonlat(self, x, y, z, radius=1):
-        """
-        Convert XYZ coordinates on a sphere to latitude and longitude.
-
-        Parameters:
-        x (float): X coordinate
-        y (float): Y coordinate
-        z (float): Z coordinate
-        radius (float): Radius of the sphere (default is Earth's mean radius in meters)
-
-        Returns:
-        tuple: (latitude in degrees, longitude in degrees)
-        """
-
-        # Compute longitude (lambda)
-        longitude = np.degrees(np.arctan2(y, x))
-
-        # Compute latitude (phi)
-        hyp = np.sqrt(x**2 + y**2)  # Projection on the equatorial plane
-        latitude = np.degrees(np.arctan2(z, hyp))
-
-        return longitude, latitude
-    
     def lonlat2xyz(self, longitude, latitude, radius=1):
         """
         Convert latitude and longitude on a sphere to XYZ coordinates.
@@ -667,6 +945,29 @@ class eaNodes():
 
         return x, y, z
 
+    def xyz2lonlat(self, x, y, z, radius=1):
+        """
+        Convert XYZ coordinates on a sphere to latitude and longitude.
+
+        Parameters:
+        x (float): X coordinate
+        y (float): Y coordinate
+        z (float): Z coordinate
+        radius (float): Radius of the sphere (default is Earth's mean radius in meters)
+
+        Returns:
+        tuple: (latitude in degrees, longitude in degrees)
+        """
+
+        # Compute longitude (lambda)
+        longitude = np.degrees(np.arctan2(y, x))
+
+        # Compute latitude (phi)
+        hyp = np.sqrt(x**2 + y**2)  # Projection on the equatorial plane
+        latitude = np.degrees(np.arctan2(z, hyp))
+
+        return longitude, latitude
+
 
     def rotate_around_vec_by_a(self, A, x, y, z):
         L = np.sqrt(x**2 + y**2 + z**2)
@@ -684,6 +985,7 @@ class eaNodes():
         axis_vec = np.cross(from_vec, to_vec)
         R = self.rotate_around_vec_by_a(by_angle, *axis_vec)
         return R @ from_vec
+
 
     def makegrid(self, plotq=0):
         '''
@@ -1059,7 +1361,7 @@ class eaNodes():
         if self.precalculate:
             self.save_or_load_attributes(mode="w")
 
-    def interp2IrregularGrid(self, path, name):
+    def interp2IrregularGrid(self, path, name, resolution=1):
         """
         interp2IrregularGrid method is used to interpolate data at
         an input path to the the equal area points.
@@ -1090,7 +1392,55 @@ class eaNodes():
         # interpolated values (i.e., not result in an nan value when
         # a value does exist).
         os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
+        #os.system("gmt grdtrack -R-180/180/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
         
+        # Nearest neighbor interpolation (needed to get values at north/south pole)
+        #os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -nn -N > {2}".format(self.filename2, path, 'temp.txt'))
+
+        # Read interpolated values
+        self.data[name] = np.loadtxt('temp.txt', delimiter='\t',usecols=[2])
+
+        # Delete temporary file
+        os.system('temp.txt');
+        
+    def interp2IrregularGrid_New(self, path, name, resolution):
+        """
+        interp2IrregularGrid method is used to interpolate data at
+        an input path to the the equal area points.
+
+        Parameters
+        -----------
+        path : STRING
+            A path to some input netCDF4 file that will be used to
+            find interpolated values at equal area nodes. 
+        name : STRING
+            The name of the data. This will be used to define a dictionary
+            entry that points to the interpolated data.  
+
+        (Re)define
+        -----------
+        self.data : DICTIONARY
+            A dictionary that holds the data that has been interpolated to
+            the equal area nodes. self.data[name] is the added entry.
+
+        self.connectionNodeIDs : NUMPY ARRAY
+            A len(self.data) x 5 array of values with column 1 corresponding
+            to node index, and column 2-5 correspond to the first 4 closest
+            connected node indices.
+        """
+        # Interpolate the values to node locations
+        # Note that the region R must be set to -181/181 so that 
+        # nodes at edges lon=-180=180 and lon=0 will have appropriately
+        # interpolated values (i.e., not result in an nan value when
+        # a value does exist).
+        cmd = "gmt grdtrack -R{3:0.2f}/{4:0.2f}/{5:0.2f}/{6:0.2f} {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt',
+                                                                             -180+resolution/2,
+                                                                             180-resolution/2,
+                                                                             -90+resolution/2,
+                                                                             90-resolution/2)
+        os.system(cmd)
+                                                                             
+
         # Nearest neighbor interpolation (needed to get values at north/south pole)
         #os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -nn -N > {2}".format(self.filename2, path, 'temp.txt'))
 
@@ -1939,7 +2289,9 @@ class BasinsEA():
             self.Fields['usedFields']
         Field : NUMPY ARRAY
             An array of values with np.nan corresponding to
-            values to be masked out. 
+            values to be masked out. The default is 'bathymetry',
+            and forces the mask to be initial set to class'
+            initialized array (e.g., etopo).
         fliprl : BOOLEAN
 
         flipud : BOOLEAN
@@ -1949,6 +2301,9 @@ class BasinsEA():
         self.maskValue : NUMPY ARRAY
             Masked values represented with non-np.nan values.
         '''
+
+        # An option to use an input field array
+        # as a mask
 
         if Field == 'bathymetry':
             self.maskValue = self.bathymetry;
@@ -2071,6 +2426,61 @@ class BasinsEA():
                             except:
                                 pass
 
+    def getBasinSize(self, fraction=True, Threshold=None):
+        """
+        getBasinSize returns the surface area of each basin
+        in either absolute m2 units or percentage of total
+        surface area of graph network.
+        
+        Parameter
+        ----------
+        fraction : BOOLEAN
+            Option to return percentage of total surface
+            area covered by each basin.            
+        Threshold : FLOAT
+            Threshold value to define small vs large basins.
+            If fraction is true, then this must be a fraction
+            value as well. Otherwise set to absolute m2 value.
+        """
+        totalNodeCnt   = 0;
+        areaAbsolutem2 = np.zeros( len(self.communitiesFinal) );
+        areaperNode    = self.G.nodes[0]['areaWeightm2']
+
+        # Iterate over each community
+        for i in range(len(self.communitiesFinal)):
+            totalNodeCnt += len(self.communitiesFinal[i])
+            areaAbsolutem2[i] = len(self.communitiesFinal[i])*areaperNode
+
+        areaFrac = 100* areaAbsolutem2/(np.sum(areaAbsolutem2));
+
+        # Calculate the number of large and small basins based on input threshold
+        if Threshold is None:
+            # Assumes all basins are consider large
+            LargeBasins = np.sum(areaFrac>0)
+            SmallBasins = np.sum(areaFrac<=0)            
+        else:
+            # Uses user input to determine size of large vs. small basins.
+            LargeBasins = np.sum(areaFrac>Threshold)
+            SmallBasins = np.sum(areaFrac<=Threshold)
+
+        if fraction:
+            text = "\nLargeBasinThresholdPercentage: {}".format(Threshold)
+        else:
+            text = "\nLargeBasinThresholdm2: {}".format(Threshold)
+        text += "\nTotalBasins: {}".format(len(areaFrac))
+        text += "\nLargeBasins: {}".format(LargeBasins)
+        text += "\nSmallBasins: {}".format(SmallBasins)
+
+        # Define return dictionary
+        returnDictionary = {"text": text};
+        if fraction:
+            returnDictionary["areaFrac"] = areaFrac;
+        else:
+            returnDictionary["areaAbsolutem2"] = areaAbsolutem2;
+        
+        return returnDictionary
+        
+        
 
     def defineBasins(self,
                      detectionMethod = {"method":"Louvain","resolution":1, "minBasinCnt":40, "minBasinLargerThanSmallMergers":True},
@@ -2257,9 +2667,12 @@ class BasinsEA():
             # eaPoint.lat, eaPoint.lon are created here
             # Note that only one eaNodes object is need for multiple fields.
             # Use the first used field to create the object
+            # self.eaPoint.precalculated is set to False is the grid has not been
+            # precalculated. Otherwise the precalculated grid is read in.
             self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
                                    precalculate=True,
                                    precalculated=True);
+                                   
 
             # Creates
             # 1) Set of nodes that represent equal area quadrangles.
@@ -2267,6 +2680,9 @@ class BasinsEA():
             # with missing data)
             if not self.eaPoint.precalculated:
                 self.eaPoint.makegrid(plotq=0);
+
+            # Rounding to about 1.1 km resolution
+            Spresolution = np.round( np.abs(np.diff(self.lat[:,0])[0]), 5)
 
             # Loop over all used fields
             for field in self.Fields['usedFields']:
@@ -2281,10 +2697,14 @@ class BasinsEA():
                                     parameterIn=parameter,
                                     parameterOut=parameterOut)
                 
+
+                
                 # Interpolate from grided nodes to equal area nodes
                 # Defines self.eaPoint.data with data at equal area nodes.
                 self.eaPoint.interp2IrregularGrid(path='tempSimp_{}.nc'.format(parameterName),
-                                                  name=parameterOut)
+                                                  name=parameterOut,
+                                                  resolution=Spresolution)
+
 
                 # Assign interpolated grid and connections to dictionary entry
                 self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
@@ -3102,10 +3522,98 @@ class BasinsEA():
                 plt.title("Geographic Network of points")
                 plt.show()
 
+    def reportEvaluationMetrics(self, returnText=True, resolution="Not Recorded", ensembleSize="Not Recorded", distance_threshold="Not Recorded"):
+        """
+        reportEvaluationMetrics reports evaluation metrics
+        for the quality of communities detected.
+        
+        Parameters
+        -----------
+        returnText : BOOLEAN
+            Option to return a string of evaluation metrics
+            that is useful for outputing to commandline or
+            reporting to log text file.
+        resolution : FLOAT
+            Resolution of the field. The default is "Not Recorded".
+        ensembleSize : INT
+            The size of the ensemble used for the reduction step.
+            The default is "Not Recorded".
+        distance_threshold : FLOAT
+            Distance threshold used for ensemble merge.
+            The default is "Not Recorded".
 
-            ################
-            ### Plotting ###
-            ################
+        
+        Return
+        -------
+        DICTIONARY
+            A set of evaluation metrics 
+        STRING
+            A set of evaluation metrics
+        
+        """
+        # Create nodeclustering object
+        from cdlib import evaluation
+        from cdlib import NodeClustering
+
+
+        ###########################################
+        ### Report community evaluation metrics ###
+        ###########################################
+
+        # Create node cluster
+        # Note that the small basin mergers are not inlcuded
+        # in the LGNClusters. Only large basin mergers such that
+        # small basin mergers results in X chosen basins.
+        ReducedClusters=NodeClustering(communities=self.Rcommunities,
+                            graph=self.G,
+                            method_name="consensus_ledien_fixed",
+                            method_parameters={
+                                "resolution_parameter": resolution,
+                                "runs": ensembleSize,
+                                "distance_threshold": distance_threshold}
+                            )
+
+        LGNClusters=NodeClustering(communities=self.communitiesFinal,
+                            graph=self.G,
+                            method_name="consensus_ledien_fixed",
+                            method_parameters={
+                                "resolution_parameter": resolution,
+                                "runs": ensembleSize,
+                                "distance_threshold": distance_threshold}
+                            )
+        
+        # Define string
+        readmetxt = "";
+        
+        # Define dictionary
+        metrics = {};
+        
+        # Calculate community detection metrics
+        for cluster, method in zip([ReducedClusters, LGNClusters], ["ReducedClusters", "LGNClusters"]):
+            metrics[method+"-newman_girvan_modularity"] = evaluation.newman_girvan_modularity(self.G, cluster)
+            metrics[method+"-internal_edge_density"] = evaluation.internal_edge_density(self.G, cluster)
+            metrics[method+"-erdos_renyi_modularity"]= evaluation.erdos_renyi_modularity(self.G, cluster)
+            metrics[method+"-modularity_density"]    = evaluation.modularity_density(self.G, cluster)
+            metrics[method+"-avg_embeddedness"]      = evaluation.avg_embeddedness(self.G, cluster)
+            metrics[method+"-conductance"]           = evaluation.conductance(self.G, cluster)
+            metrics[method+"-surprise"]              = evaluation.surprise(self.G, cluster)
+
+            # Add community evaluation metrics to output
+            readmetxt += "Community evaluation metrics ({}):\n".format(method);
+            readmetxt += "newman_girvan_modularity:\t {}\n".format(metrics[method+"-newman_girvan_modularity"].score)
+            readmetxt += "erdos_renyi_modularity:\t\t {}\n".format(metrics[method+"-erdos_renyi_modularity"].score)
+            readmetxt += "modularity_density:\t\t {}\n".format(metrics[method+"-modularity_density"].score)
+            readmetxt += "internal_edge_density:\t\t {} +- {} (std)\n".format(metrics[method+"-internal_edge_density"].score, metrics[method+"-internal_edge_density"].std)
+            readmetxt += "avg_embeddedness:\t\t {} +- {} (std)\n".format(metrics[method+"-avg_embeddedness"].score, metrics[method+"-avg_embeddedness"].std)
+            readmetxt += "conductance:\t\t\t {} +- {} (std)\n".format(metrics[method+"-conductance"].score, metrics[method+"-conductance"].std)
+            readmetxt += "surprise:\t\t\t {}\n".format(metrics[method+"-surprise"].score)
+            readmetxt += "\n\n"
+            
+        if returnText:
+            return metrics, readmetxt
+        else:
+            return metrics
+
 
     def defineBasinsSingleField(self, minBasinCnt = 3,
                      detectionMethod = {"method":"Louvain", "resolution":1},
@@ -3768,7 +4276,7 @@ class BasinsEA():
             ### Plotting ###
             ################
             
-    def interp2regularGrid(self, dataIrregular=None, mask=True):
+    def interp2regularGrid_python(self, dataIrregular=None, mask=True):
         """
         interp2regularGrid method is used to interpolate data to
         a regular grid given an input of irregular spaced data.
@@ -3810,7 +4318,6 @@ class BasinsEA():
         ## Read the regular grid of data
         self.InterpData = Dataset('grid.nc', 'r');
         '''
-
         import copy as cp
 
         # Get basin IDs from network object.
@@ -3832,8 +4339,6 @@ class BasinsEA():
         # Define a mapping function that maps node indecies on a irregular grid
         # to those on the regular grid. This will speed up calculations if this
         # function is called more than once.
-         
-
 
         # Iterate over all latitude and longitudes of the input grid.
         for i in range(len(self.lat[:,0])):
@@ -3847,13 +4352,87 @@ class BasinsEA():
                 # Assign the nearest basin ID to element (i,j) 
                 array[i,j] = int(dataIrregular[np.argwhere(np.nanmin(x) == x)[0][0], 2])
 
-        ## Apply the mask
 
+        ## Apply the mask
         if mask:
             array[np.isnan(self.maskValue)] = np.nan
 
         
         self.BasinIDA = array;
+    
+
+    def interp2regularGrid(self,
+                           dataIrregular=None,
+                           mask=True,
+                           propertyName="basinID"):
+        """
+        interp2regularGrid is a method used to interpolate
+        equal area spaced nodes properties to a equal degree spaced
+        grid.
+        
+        GMT version using nearest neighbor interpolation via nearneighbor.
+        
+        Parameters
+        -----------
+        dataIrregular : NUMPY ARRAY
+            Equal area grid in a 3xn array with columns of lat, lon,
+            and node property.
+        mask : NUMPY ARRAY
+            Mask to apply to interpolated grid.
+        propertyName : STRING
+            Name of property stored in graph.
+        """
+
+        # Set spatial resolution of interpolated field
+        # Rounding to about 1.1 km resolution
+        resolution = np.round( np.abs(np.diff(self.lat[:,0])[0]), 5)
+
+        # 
+        if dataIrregular is None:
+            tmpValuesID  = nx.get_node_attributes(self.G, propertyName)
+            tmpValuesPos = nx.get_node_attributes(self.G, "pos")
+            dataIrregular = np.zeros((len(tmpValuesPos), 3))
+            
+            if propertyName == "basinID":
+                # basin assignment to tmpValuesID is done
+                # differently due to how it is stored
+                # in nodes.
+                for i in tmpValuesID:
+                    dataIrregular[i, :] = np.array([
+                        tmpValuesPos[i][1],  # lon
+                        tmpValuesPos[i][0],  # lat
+                        tmpValuesID[i][propertyName] # basinID
+                    ])
+            else:
+                for i in tmpValuesID:
+                    dataIrregular[i, :] = np.array([
+                        tmpValuesPos[i][1],  # lon
+                        tmpValuesPos[i][0],  # lat
+                        tmpValuesID[i]       # property
+                    ])
+                
+
+        np.savetxt("temp_points.txt", dataIrregular, fmt="%.8f")
+
+        R = "-R-180/180/-90/90"
+        I = f"-I{resolution:0.1f}d"
+        S = f"-S{1.5*resolution:0.1f}d"
+
+        # Nearest neighbor interpolation
+        os.system(f"gmt nearneighbor temp_points.txt {R} {I} {S} -rp -Nn -Gtemp_grid.nc")
+
+        nc = Dataset("temp_grid.nc", "r")
+        grid_var = list(nc.variables.keys())[-1]
+        grid_data = np.flipud(nc.variables[grid_var][:]) # if .nc have rows decrease in latitude.
+        #grid_data = nc.variables[grid_var][:] # if .nc have rows increase in latitude.
+        nc.close()
+
+        if mask:
+            grid_data = np.where(np.isnan(self.maskValue), np.nan, grid_data)
+
+        self.BasinIDA = grid_data
+
+        #os.system("rm temp_points.txt temp_grid.nc")
 
     def setEdgeParameter(self,
                          netCDF4Path,
@@ -4279,6 +4858,7 @@ class BasinsEA():
 
                 plt.title("Geographic Network of points")
                 plt.show()
+
 
     def findCommunities(self,
                         detectionMethod,
@@ -4776,7 +5356,7 @@ class BasinsEA():
             
 
             if minBasinLargerThanSmallMergers:
-                print("Girvan-Newman mergers such that {0} basins larger than {1} {2}".format(detectionMethod['minBasinCnt'],np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']), detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod']))
+                print("Girvan-Newman mergers are being conducted such there are at most {0} basins larger than {1} {2} surface area".format(detectionMethod['minBasinCnt'],np.max(detectionMethod['mergerPackage']['mergeSmallBasins']['threshold']), detectionMethod['mergerPackage']['mergeSmallBasins']['thresholdMethod']))
                 # Iteratively run the Girvan-Newman algorithm until X communities greater than areaThreshold are detected.
 
                 # Define attribute to merge
@@ -5684,7 +6264,7 @@ class BasinsEA():
         nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
 
 
-    def calculateBasinParameters(self, binEdges=None, verbose=True):
+    def calculateBasinParameters(self, binEdges=None, fieldNum="Field1", fldName=os.getcwd(), verbose=True):
         """
         calculateBasinParameters method will calculate basin bathymetry
         distributions, area and ocean volume fractions for basin.
@@ -5697,6 +6277,10 @@ class BasinsEA():
             the last bin. The default is None, but this is modified to 
             np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]) within
             the code.
+        fieldNum : STRING, optional
+            Name of the field to be used. The default is "Field1".
+        fldName : STRING
+            Directory to save figures to. The default is os.getcwd().
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
@@ -5771,7 +6355,7 @@ class BasinsEA():
         #    BasinIDA[(lonA==pos[nodei,1])&(latA==pos[nodei,0])] = BasinID[nodei];
 
         # Calculate basin distributions
-        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaFractionG, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, lonA, self.BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, verbose=verbose)
+        bathymetryAreaDistBasin, bathymetryVolFraction, bathymetryAreaFraction, bathymetryAreaFractionG, bathymetryAreaDist_wHighlatG, bathymetryAreaDistG, binEdges = Bathymetry.calculateBathymetryDistributionBasin(bathymetry, latA, lonA, self.BasinIDA, self.highlatlat, self.areaWeights, binEdges=binEdges, fldName=fldName, verbose=verbose)
         
         # Define basinID and nodeid array
         #self.BasinIDA = BasinIDA;
@@ -5789,7 +6373,7 @@ class BasinsEA():
         # parameters have been defined.
         self.BasinParametersDefined = True;
 
-    def calculateBasinConnectivityParameters(self, binEdges=None, disThres=444, verbose=True):
+    def calculateBasinConnectivityParameters(self, binEdges=None, disThres=444, fieldNum="Field1", fldName=os.getcwd(), verbose=True):
         """
         calculateBasinConnectivityParameters method is used to calculate
         basin connectivity parameters. The parameters are described in
@@ -5807,6 +6391,10 @@ class BasinsEA():
             Value, in km, represents the distance threshold, away from
             a basin boundary, which will be consider part of that basin
             connection. The default value is 444.
+        fieldNum : STRING, optional
+            Name of the field to be used. The default is "Field1".
+        fldName : STRING
+            Directory to save figures to. The default is os.getcwd().
         verbose : BOOLEAN, optional
             Reports more information about process. The default is True.
 
@@ -5945,7 +6533,7 @@ class BasinsEA():
         allNodeAreaWeights = np.array([], dtype=float);
         for node in BasinNodes:
             allNodeIDs = np.append(allNodeIDs, node);
-            allNodeBathymetry  = np.append(allNodeBathymetry, BasinNodes.nodes[node]['depth']);
+            allNodeBathymetry  = np.append(allNodeBathymetry, BasinNodes.nodes[node][fieldNum]);
             allNodeAreaWeights = np.append(allNodeAreaWeights, BasinNodes.nodes[node]['areaWeightm2']);
             
         
@@ -6067,14 +6655,14 @@ class BasinsEA():
             
             # Plot the basin IDs, connectivity nodes, and their
             # bathymetry distributions
-            self.plotBasinConnections(pos, binEdges);
+            self.plotBasinConnections(pos, binEdges, fieldNum=fieldNum, fldName=fldName, savePNG=True, saveSVG=True);
 
-    def plotBasinConnections(self, pos, binEdges=None,
-                             savePNG=False, saveSVG=False, outputDir = os.getcwd(), fidName = "plotBasinConnections.png"):
+    def plotBasinConnections(self, pos, binEdges=None, fieldNum = "Field1",
+                             fldName = os.getcwd(), savePNG=False, saveSVG=False, fidName = "BasinConnections.png"):
         """
         plotBasinConnections is used to plot results calculating from
         running the method calculateBasinConnectivityParameters.
-        
+
         Parameters
         -----------
         pos : NUMPY ARRAY
@@ -6086,6 +6674,10 @@ class BasinsEA():
             the last bin. The default is None, but this is modified to 
             np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]) within
             the code.
+        fieldNum : STRING, optional
+            Name of the field to be used. The default is "Field1".
+        fldName : STRING
+            Directory to save figures to. The default is os.getcwd().
         savePNG : BOOLEAN
             An option to save an PNG output. The default is False.
         saveSVG : BOOLEAN
@@ -6095,12 +6687,11 @@ class BasinsEA():
         --------
         None.
         """
-
         # If binEdges are not defined in method input then define with
         # LOSCAR's, a carbon cycle model, default distribution.
         if binEdges is None:
             binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
-    
+
 
         # Set up the Mollweide projection
         fig = plt.figure(figsize=(8, 8))
@@ -6130,7 +6721,7 @@ class BasinsEA():
         # Plot basin contourf and coastlines
 
         ## Add the plot using pcolormesh
-        mesh = ax1.pcolormesh(self.lon, self.lat, self.BasinIDA, cmap=custom_cmap1, transform=ccrs.PlateCarree())
+        mesh = ax1.pcolormesh(self.lon, self.lat, self.BasinIDA, cmap=custom_cmap1, transform=ccrs.PlateCarree(), zorder=0)
 
         ## Add coastlines
         ### Set any np.nan values to 0.
@@ -6141,22 +6732,60 @@ class BasinsEA():
 
         # Plot basin connection contour.
 
-        ## Define global array of connective bathymetry
-        BC = np.empty((np.shape(self.lat)));
-        BC[:] = np.nan;
-        for connectingNodei in range(len(self.connectingNodes)):
-            for lat, lon in pos[self.connectingNodes[connectingNodei].astype('int')]:
-                BC[(self.lat==lat)&(self.lon==lon)] = connectingNodei;
+        # ## Define global array of connective bathymetry
+        # BC = np.empty((np.shape(self.lat)));
+        # BC[:] = np.nan;
+        # for connectingNodei in range(len(self.connectingNodes)):
+        #     for lat, lon in pos[self.connectingNodes[connectingNodei].astype('int')]:
+        #         BC[(self.lat==lat)&(self.lon==lon)] = connectingNodei; # FIXME: Only works for equal spacing (in degrees)
 
-        ## Plot 
-        plt.contourf(self.lon, self.lat, BC,
-                     cmap=custom_cmap2,
-                     transform=ccrs.PlateCarree());
-        
+
+        # ## Plot 
+        # plt.contourf(self.lon, self.lat, BC,
+        #              cmap=custom_cmap2,
+        #              transform=ccrs.PlateCarree(), zorder=1);
+        def resolutionScaledPoints(ax, resolution=1):
+            """
+            Convert a resolution in degrees to an approximate marker size in pt2
+            that appears uniform on a global PlateCarree map.
+            """
+            fig = ax.get_figure()
+            bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+            width_inch, height_inch = bbox.width, bbox.height
+
+            # Use the global degree range
+            deg_width = 360  # Longitude range
+            deg_height = 180  # Latitude range
+
+            deg_per_inch_x = deg_width / width_inch
+            deg_per_inch_y = deg_height / height_inch
+
+            # Approximate with the average
+            deg_per_inch = np.mean([deg_per_inch_x, deg_per_inch_y])
+
+            diameter_inch = resolution / deg_per_inch
+            radius_pt = (diameter_inch * 72) / 2.0  # 1 inch = 72 points
+            area_pt = np.pi * radius_pt**2
+            return area_pt
+
+        scatter_area = resolutionScaledPoints(ax1, resolution=self.Fields[fieldNum]['resolution'])
+
+        validCon = 0;
+        for connectingNodei in range(len(self.connectingNodes)):
+            connection = pos[self.connectingNodes[connectingNodei].astype('int')]
+            if np.size(connection) != 0:
+                plt.scatter(connection[:,1], connection[:,0],
+                            s=scatter_area,
+                            color=colors2[validCon],
+                            transform=ccrs.PlateCarree(), zorder=1);
+                validCon+=1
+        #self.pos= pos;
+
+
 
         # Plot gridlines
         ax1.gridlines()
-        
+
         # Plot bathymetry distributions of basin connections.
 
         ## Set new axis to plot on
@@ -6164,13 +6793,14 @@ class BasinsEA():
 
         ## Define factors for plotting
         factor1 = .1
-        factor2 = .25
-        if self.basinCnt%2:
-            factor3 = 0.5;
-        else:
+        factor2 = .15
+        if self.basinConCnt%2:
             factor3 = 0;
+        else:
+            factor3 = 1;
 
         ## Iteratively plot basin bathymetry distributions
+        print(binEdges)
         validConi = 0;
         for i in range(self.basinConCnt):
             # Calculate index of distribution
@@ -6178,7 +6808,7 @@ class BasinsEA():
             # Check if distribution is valid (i.e., if basins are connected)
             if (~np.isnan(self.bathymetryConDist[idx[0],idx[1]])).any():
                 # Distribution is valid; now plot
-                plt.bar(x=binEdges[1:]-(factor2/2)*(self.validConCnt/2 - i -factor3)*np.diff(binEdges),
+                plt.bar(x=binEdges[1:]+(validConi)*((factor2)*np.diff(binEdges)) - (validCon-factor3)*(factor2*np.diff(binEdges))/2,                        
                         height=self.bathymetryConDist[idx[0],idx[1]],
                         width=factor1*np.diff(binEdges),
                         label= "Connection {:0.0f}".format(validConi),
@@ -6198,15 +6828,15 @@ class BasinsEA():
         ## Format figure format
         plt.gca().spines['top'].set_visible(False)
         plt.gca().spines['right'].set_visible(False)
-        
+
 
         # Save figure
         if savePNG:
-            plt.savefig("{}/{}".format(outputDir,fidName), dpi=600)
+            plt.savefig("{}/{}".format(fldName,fidName), dpi=600)
         if saveSVG:
-            plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+            plt.savefig("{}/{}".format(fldName,fidName.replace(".png", ".svg")))
             
-    def saveCcycleParameter(self, verbose=True):
+    def saveCcycleParameter(self, fieldNum="Field1", verbose=True):
         """
         saveCcycleParameter method create a new netCDF4 containing 
         the original bathymetry model, areaweights, and other global
@@ -6379,7 +7009,7 @@ class BasinsEA():
             basinConnectionBathymetry.units = 'km'; basinConnectionBathymetry.long_name = 'km depth';
         
         # Format title
-        ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees. NetCDF4 includes carbon cycle bathymetry parameters'.format(self.body, self.resolution)
+        ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees. NetCDF4 includes carbon cycle bathymetry parameters'.format(self.body, self.Fields[fieldNum]['resolution'])
         
         # Populate the variables
         lat[:]  = self.lat[:,0];
@@ -7694,7 +8324,7 @@ class Basins():
             # area in meters.
             methodScalar = 1;
 
-        # Define the number of define basins
+        # Define the number of defined basins
         BasinIDmax = self.G
         distance = 1e20;
 
@@ -7805,6 +8435,7 @@ class Basins():
                     basinIDnew = np.argwhere(basiniCentroidDist == np.nanmin(basiniCentroidDist))[0][0];
 
                 elif mergeMethod == 'nearBasinEdge':
+                    print(f"nearbasin merge: {i}, {basinIDi} is getting merged.")
                     # Find distance from centroid to every other node
                     Distance = haversine_distance(LatCentroid[i],
                                                   LonCentroid[i],
