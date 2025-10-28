@@ -22,13 +22,126 @@ from netCDF4 import Dataset
 import cartopy.crs as ccrs # type: ignore
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LinearSegmentedColormap
-
+import itertools
 
 # For progress bars
 from tqdm.auto import tqdm # used for progress bar
 
 from ExoCcycle import Bathymetry # type: ignore
 
+################################################################
+###################### Functions to Sort #######################
+################################################################
+
+def combine_lists(*lists):
+    """
+    Combine N input lists into all possible unique combinations.
+    Returns a numpy array of shape (number_of_combinations, N).
+
+    lists : Arbitrary number of positional argument lists
+        Lists need not be equal in length, but must contain
+        only float or int elements. String elements do not
+        work in this function
+
+    Return : NUMPY ARRAY
+        All possible unique combinations from input list.
+
+    Example:
+    fileNames = ["file1.nc", "file2.nc"]
+    fileNameIDs = [0, 1]
+    ensembleSizes = [10, 50]
+
+    A = combine_lists(fileNameIDs, ensembleSizes)
+
+    for fileNameID, ensembleSize in A:
+        print("values:", fileNameID, ensembleSize, fileNames[fileNameID])
+
+    Output:
+    values: 0 10 "file1.nc"
+    values: 0 50 "file1.nc"
+    values: 1 10 "file2.nc"
+    values: 1 50 "file2.nc"
+    """
+    # Generate all combinations (cartesian product)
+    combinations = list(itertools.product(*lists))
+    
+    # Convert to numpy array
+    A = np.array(combinations)
+    
+    return A
+
+def filterNc(options={"inputFile":None, "outputFile":None, "threshold":None, "lr":None, "gt":None},
+            keepVars = ['lat', 'lon', 'bathymetry']):  
+    """
+    filterNc is a function used for filtering a NetCDF4 file.
+    Options for filtering can be expanded, but the main use
+    of this function is to filter data above or below some
+    threshold value.
+    
+    Parameters
+    -----------
+    options : DICTIONARY
+        A set of options used to modify the input netcdf4.
+    
+    Returns
+    --------
+    None
+    """
+    # Check options have been defined, if not then assign a default
+    optionsList = ["inputFile", "outputFile", "threshold", "le", "gt"];
+    for option in optionsList:        
+        try:
+            #print(option, options[option])
+            options[option]
+        except:
+            options[option] = None
+            #print(option,options[option], "changed")
+    
+    
+    # Open original file
+    src = Dataset(options["inputFile"], 'r')
+    
+    # Determine dimensions needed by variables we want to keep
+    needed_dims = set()
+    for name, variable in src.variables.items():
+        if name in keepVars:
+            needed_dims.update(variable.dimensions)
+    
+    # Create new file
+    dst = Dataset(options["outputFile"], 'w', format='NETCDF4_CLASSIC')
+    
+    # Copy only needed dimensions
+    for name, dimension in src.dimensions.items():
+        if name in needed_dims:
+            dst.createDimension(name, (len(dimension) if not dimension.isunlimited() else None))
+        
+    # Copy variables we want to keep
+    for name, variable in src.variables.items():
+        if name in keepVars:
+            # Create variable in new file
+            x = dst.createVariable(name, variable.datatype, variable.dimensions)
+            # Copy variable attributes
+            x.setncatts({attr: variable.getncattr(attr) for attr in variable.ncattrs()})
+
+            if name == options["varName"]:
+                var = variable[:];
+                if options["le"]:
+                    var.data[var.data<=options["threshold"]] = np.nan;
+                if options["gt"]:
+                    var.data[var.data>options["threshold"]] = np.nan;
+
+                # Copy modified variable data
+                x[:] = var;
+            else:
+                # Copy variable data
+                x[:] = variable[:];
+    
+    # Copy global attributes
+    dst.setncatts({attr: src.getncattr(attr) for attr in src.ncattrs()});
+    
+    # Close files
+    src.close();
+    dst.close();
 
 #######################################################################
 ###################### ExoCcycle Module Imports #######################
@@ -244,7 +357,7 @@ def areaWeights(resolution = 1, radius = 6371e3, LonStEd = [-180,180], LatStEd =
         #FIXME: Add plotGlobal Function
         ...
 
-    return areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated
+    return areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated 
 
 
 # Define function to calculate the area of a cell on a sphere.
@@ -285,13 +398,473 @@ def plotGlobal(lat, lon, values,
                fidName = "plotGlobal.png",
                cmapOpts={"cmap":"viridis",
                          "cbar-title":"cbar-title",
+                         "cbar-range":[0,1],
+                         "cbar-levels":[0,0.5,1]},
+               pltOpts={"valueType": "Bathymetry",
+                        "valueUnits": "m",
+                        "plotTitle":"",
+                        "plotZeroContour":False,
+                        "plotIntegerContours":False,
+                        "transparent":False,
+                        "region":[-180,180,-90,90],
+                        "projection":ccrs.Mollweide(),
+                        "regionalZBoundaries":False},
+               saveSVG=False,
+               savePNG=False):
+    """
+    plotGlobal function is used to plot global ranging datasets that
+    are represented with evenly spaced latitude and longitude values.
+
+    Parameters
+    ----------
+    lat : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    lon : NUMPY ARRAY
+        nx2n array representing cell registered longitudes, in deg,
+        ranging from [-180, 180]. Longitudes change from column to column.
+    Values : NUMPY ARRAY
+        nx2n array representing cell registered geographic data, in [-] units.
+    cmapOpts : DICTIONARY
+        A set of options to format the color map and bar for the plot
+    pltOpts : DICTIONARY
+        A set of options to format the plot
+    saveSVG : BOOLEAN
+        An option to save an SVG output. The default is False.
+    savePNG : BOOLEAN
+        An option to save an PNG output. The default is False.
+
+    Returns
+    -------
+    None.
+    """
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+    
+    ## Set projection and extent
+    projection = pltOpts.get("projection", ccrs.Mollweide())
+    region = pltOpts.get('region', [-180, 180, -90, 90])
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=projection)
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        pass
+    else:
+        ax.set_extent(region, crs=ccrs.PlateCarree())
+    
+    ## Set default for option to use regional Zvalue boundaries
+    regionalZBoundaries = pltOpts.get('regionalZBoundaries', False)
+    
+    if regionalZBoundaries:
+        # Set values outside of region to nan
+        values[ ~((lon>=pltOpts["region"][0])&(lon<=pltOpts["region"][1])&(lat>=pltOpts["region"][2])&(lat<=pltOpts["region"][3]))] = np.nan
+        # Reset indexing
+        cnt = 0;
+        for idx in np.unique(values):
+            if idx != np.nan:
+                values[values==idx] = cnt
+                cnt+=1;
+        
+        cmapOpts["cbar-range"] = [0,np.nanmax(values)]
+        
+    ## Set if the mesh should be plotted
+    meshOpt = pltOpts.get('mesh', True)
+        
+    ## Set if solid polygons should be plotted for nan values.
+    nanSolidPoly        = pltOpts.get("nanSolidPoly", False)
+    nanSolidPolyOutline = pltOpts.get("nanSolidPolyOutline", False)
+
+    ## Set if the coastline should be plotted
+    coastlinesOpt = pltOpts.get("coastlines", False);
+
+    ## Set option to add contour for zero value
+    plotZeroContour = pltOpts.get("plotZeroContour", False);
+    
+    ## Set default option for plotIntegerContours
+    plotIntegerContours = pltOpts.get("plotIntegerContours", False);
+
+    ## Add the plot using pcolormesh
+    if meshOpt:
+        try:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
+                                levels = cmapOpts["cbar-levels"],
+                                zorder=0)
+        except:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
+                                zorder=0)
+    
+
+    ## Add zero value contour
+    if plotZeroContour:
+        # Set any np.nan values to 0.ccrs
+        values[np.isnan(values)] = 0;
+        zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+    ## Add solid polygons for nan values
+    if nanSolidPoly:
+        valuesNan                   = cp.deepcopy(values)
+        valuesNan[:]                = np.nan;
+        valuesNan[np.isnan(values)] = 1;
+        mesh2 = ax.pcolormesh(lon, lat, valuesNan,
+                              transform=ccrs.PlateCarree(),
+                              cmap='YlOrRd',
+                              vmin=0, vmax=3, zorder=1)
+    
+    ## Add Line around clusters of nan values
+    if nanSolidPolyOutline:
+        valuesNan                   = cp.deepcopy(values)
+        valuesNan[:]                = 0;
+        valuesNan[np.isnan(values)] = 1;
+        nanContour = ax.contour(lon, lat, valuesNan,
+                                levels=[1/2],
+                                colors='blue',
+                                linewidths=1.1,
+                                transform=ccrs.PlateCarree(),
+                                zorder=2)
+
+    ## Add contours in integer steps (useful for dividing catagorical data)
+    valuesContour = cp.deepcopy(values)
+    if plotIntegerContours:
+        # Set any np.nan values to 0.
+        for i in range(len(np.unique(values))):
+            valuesContour[values==i] = 1;
+            valuesContour[values!=i] = 0;
+            ax.contour(lon, lat, valuesContour,
+                       levels=[1/2],
+                       colors='black',
+                       linewidths=1,
+                       transform=ccrs.PlateCarree(),
+                       zorder=0)
+
+    ## Add coastlines
+    if coastlinesOpt:
+        ax.coastlines(color='blue', linewidth=1, zorder=10)
+
+    ## Add a colorbar
+    if meshOpt:
+        cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+        
+        ## Set four tick marks with integer values unless
+        sep = 4
+        if np.diff(cmapOpts["cbar-range"])[0]<sep:
+            c = np.diff(cmapOpts["cbar-range"])/sep
+        else:
+            c = np.diff(cmapOpts["cbar-range"])//sep
+        a = cmapOpts["cbar-range"][0]
+        b = cmapOpts["cbar-range"][1]+c/2
+        
+        cbar.set_ticks(np.arange(a,b,c))
+        
+        ## Set cbar name
+        if regionalZBoundaries:
+            cbar.set_label(label="Regional {} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        else:
+            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        gl = ax.gridlines(draw_labels=False,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 30),
+                          ylocs=np.arange(region[2], region[3]+1, 30)
+                         )
+    else:
+        gl = ax.gridlines(draw_labels=True,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 20),
+                          ylocs=np.arange(region[2], region[3]+1, 20)
+                         )
+
+        gl.xlabels_top = False
+        gl.xlabels_bottom = True
+        gl.ylabels_left = True
+        gl.ylabels_right = False
+
+        # Set the tick label color here
+        gl.xlabel_style = {"color": "red", "size": 10, "rotation": 0}
+        gl.ylabel_style = {"color": "red", "size": 10, "rotation": 0}
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    ## Set transparency value
+    try:
+        pltOpts["transparent"];
+    except:
+        pltOpts["transparent"] = False;
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=600, transparent=pltOpts["transparent"])
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+
+
+def plotGlobalSilhouette(lat, lon, values, BasinIDA,
+               outputDir = os.getcwd(),
+               fidName = "plotGlobal_silhouette.png",
+               cmapOpts={"cmap":"jet",
+                         "cbar-title":"cbar-title",
+                         "cbar-range":[0,1],
+                         "cbar-levels":np.array([0,.25, .5, .7, 1]),
+                         "cbar-intervals":np.array([0,.25, .5, .7, 1]),
+                         "cbar-level-names":["No", "Weak", "Medium", "Strong"]},
+               pltOpts={"valueType": "Silhouette Structure",
+                        "valueUnits": "-",
+                        "plotTitle":"",
+                        "plotZeroContour":False,
+                        "nanSolidPoly":True,
+                        "nanSolidPolyOutline":True,
+                        "plotIntegerContours":True,
+                        "regionalZBoundaries":False,
+                        "region":[-180,180,-90,90],
+                        "projection":ccrs.Mollweide(),
+                        "transparent":True},
+               saveSVG=False,
+               savePNG=False):
+    """
+    plotGlobalSilhouette function is used to plot global silhouette values
+    for each node that is represented with evenly spaced latitude and
+    longitude values.
+
+    Parameters
+    ----------
+    lat : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    lon : NUMPY ARRAY
+        nx2n array representing cell registered longitudes, in deg,
+        ranging from [-180, 180]. Longitudes change from column to column.
+    Values : NUMPY ARRAY
+        nx2n array representing cell registered geographic silhouette values, in [-] units.
+    BasinIDA : NUMPY ARRAY
+        nx2n array representing cell registered geographic basinIDs, in [-] units.
+    cmapOpts : DICTIONARY
+        A set of options to format the color map and bar for the plot
+    pltOpts : DICTIONARY
+        A set of options to format the plot
+    saveSVG : BOOLEAN
+        An option to save an SVG output. The default is False.
+    savePNG : BOOLEAN
+        An option to save an PNG output. The default is False.
+
+    Returns
+    -------
+    None.
+    """
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+    
+    ## Set projection and extent
+    projection = pltOpts.get("projection", ccrs.Mollweide())
+    region = pltOpts.get('region', [-180, 180, -90, 90])
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=projection)
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        pass
+    else:
+        ax.set_extent(region, crs=ccrs.PlateCarree())
+    
+    ## Set default for option to use regional Zvalue boundaries
+    regionalZBoundaries = pltOpts.get('regionalZBoundaries', False)
+    
+    if regionalZBoundaries:
+        # Set values outside of region to nan
+        values[ ~((lon>=pltOpts["region"][0])&(lon<=pltOpts["region"][1])&(lat>=pltOpts["region"][2])&(lat<=pltOpts["region"][3]))] = np.nan
+        # Reset indexing
+        cnt = 0;
+        for idx in np.unique(values):
+            if idx != np.nan:
+                values[values==idx] = cnt
+                cnt+=1;
+        
+        cmapOpts["cbar-range"] = [0,np.nanmax(values)]
+        
+    ## Set if the mesh should be plotted
+    meshOpt = pltOpts.get('mesh', True)
+        
+    ## Set if solid polygons should be plotted for nan values.
+    nanSolidPoly        = pltOpts.get("nanSolidPoly", False)
+    nanSolidPolyOutline = pltOpts.get("nanSolidPolyOutline", False)
+
+    ## Set if the coastline should be plotted
+    coastlinesOpt = pltOpts.get("coastlines", False);
+
+    ## Set option to add contour for zero value
+    plotZeroContour = pltOpts.get("plotZeroContour", False);
+    
+    ## Set default option for plotIntegerContours
+    plotIntegerContours = pltOpts.get("plotIntegerContours", False);
+    
+    ## Get cmap at 'cbar-intervals'
+    cmapOpts["cmap"] =  plt.cm.get_cmap(cmapOpts["cmap"])
+    
+    ## Add the plot using pcolormesh
+    if meshOpt:
+        try:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                levels = cmapOpts["cbar-levels"],
+                                norm = mpl.colors.BoundaryNorm(cmapOpts["cbar-levels"], ncolors=cmapOpts["cmap"].N, clip=False),
+                                zorder=0)
+                                # vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
+        except:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                norm= mpl.colors.BoundaryNorm(cmapOpts["cbar-levels"], ncolors=cmapOpts["cmap"].N, clip=False),
+                                zorder=0)
+                                #vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
+    
+
+    ## Add zero value contour
+    if plotZeroContour:
+        # Set any np.nan values to 0.ccrs
+        values[np.isnan(values)] = 0;
+        zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+    ## Add solid polygons for nan values
+    if nanSolidPoly:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = np.nan;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        mesh2 = ax.pcolormesh(lon, lat, valuesNan,
+                              transform=ccrs.PlateCarree(),
+                              cmap='YlOrRd',
+                              vmin=0, vmax=3, zorder=1)
+    
+    ## Add Line around clusters of nan values
+    if nanSolidPolyOutline:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = 0;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        nanContour = ax.contour(lon, lat, valuesNan,
+                                levels=[1/2],
+                                colors='blue',
+                                linewidths=1.1,
+                                transform=ccrs.PlateCarree(),
+                                zorder=2)
+
+    ## Add contours in integer steps (useful for dividing catagorical data)
+    valuesContour = cp.deepcopy(BasinIDA)
+    if plotIntegerContours:
+        # Set any np.nan values to 0.
+        for i in range(len(np.unique(BasinIDA))):
+            valuesContour[BasinIDA==i] = 1;
+            valuesContour[BasinIDA!=i] = 0;
+            ax.contour(lon, lat, valuesContour,
+                       levels=[1/2],
+                       colors='black',
+                       linewidths=1,
+                       transform=ccrs.PlateCarree(),
+                       zorder=1)
+
+    ## Add coastlines
+    if coastlinesOpt:
+        ax.coastlines(color='blue', linewidth=1, zorder=10)
+
+    ## Add a colorbar
+    if meshOpt:
+        cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+        
+        # Define silhouette values that are 
+        a = cmapOpts["cbar-levels"]
+        cbarTicks = np.diff(a)/2+a[:-1]
+        cbarTickNames = cmapOpts["cbar-level-names"]
+        
+        # Set tick marks and names
+        cbar.set_ticks(cbarTicks)
+        cbar.set_ticklabels(cbarTickNames)
+
+        ## Set cbar name
+        if regionalZBoundaries:
+            cbar.set_label(label="Regional {} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        else:
+            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        gl = ax.gridlines(draw_labels=False,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 30),
+                          ylocs=np.arange(region[2], region[3]+1, 30)
+                         )
+    else:
+        gl = ax.gridlines(draw_labels=True,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 20),
+                          ylocs=np.arange(region[2], region[3]+1, 20)
+                         )
+
+        gl.xlabels_top = False
+        gl.xlabels_bottom = True
+        gl.ylabels_left = True
+        gl.ylabels_right = False
+
+        # Set the tick label color here
+        gl.xlabel_style = {"color": "red", "size": 10, "rotation": 0}
+        gl.ylabel_style = {"color": "red", "size": 10, "rotation": 0}
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    ## Set transparency value
+    try:
+        pltOpts["transparent"];
+    except:
+        pltOpts["transparent"] = False;
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=600, transparent=pltOpts["transparent"])
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def plotGlobalOld(lat, lon, values,
+               outputDir = os.getcwd(),
+               fidName = "plotGlobal.png",
+               cmapOpts={"cmap":"viridis",
+                         "cbar-title":"cbar-title",
                          "cbar-range":[0,1]},
                pltOpts={"valueType": "Bathymetry",
                         "valueUnits": "m",
                         "plotTitle":"",
                         "plotZeroContour":False,
                         "plotIntegerContours":False,
-                        "transparent":False},
+                        "transparent":False,
+                        "Region":[-90,90,-180,180]},
                saveSVG=False,
                savePNG=False):
     """
@@ -802,7 +1375,7 @@ class eaNodes():
         # Assign class attributes
         try:
             if inputs["undefined"]:
-                self.resolution = 1;
+                self.resolution = 5;
                 self.dataGrid   = "/home/bogumil/Documents/data/Muller_etal_2019_Tectonics_v2.0_netCDF/Muller_etal_2019_Tectonics_v2.0_AgeGrid-0.nc";
                 self.interpGrid = "EA_Nodes_{}_LatLon.txt".format(self.resolution);
                 self.output     = "Muller_etal_2019_Tectonics_v2.0_AgeGrid-0_EASampled.nc";
@@ -989,7 +1562,9 @@ class eaNodes():
 
     def makegrid(self, plotq=0):
         '''
-        Creates a 
+        makegrid creates a grid of nodes that represent centroids of
+        equal area diamond shape regions on the surface of a sphere,
+        and determines the edges (links) between adjacent nodes.
         
         Re(defined)
         ------------
@@ -1095,6 +1670,7 @@ class eaNodes():
             
             vec_to = self.rotate_vector(c[1], c[2], A23 * (i + 1))
             vec_from = self.rotate_vector(c[0], c[3], A14 * (i + 1))
+
         
         ###################
         #### Section 2 ####
@@ -1143,8 +1719,6 @@ class eaNodes():
 
 
         # Rotate through 90degs 3 times for 2-4:
-
-
         for k in np.array([2,3,4]):
             for i in range(nelsedge+1):
                 for j in range(nelsedge+1):
@@ -1193,9 +1767,6 @@ class eaNodes():
                         EAgrid[k-1,i,j,2] = vec_rotated[1];
                         EAgrid[k-1,i,j,3] = vec_rotated[2];
                         
-
-
-
         # Rotate diamonds 1-4 around their equatorial corners to generate diamonds 9-12
         for k in np.array([9,10,11,12]):
             for i in range(nelsedge+1):
@@ -1221,7 +1792,6 @@ class eaNodes():
                     EAgrid[k-1,i,j,2] = vec_rotated[1];
                     EAgrid[k-1,i,j,3] = vec_rotated[2];
                     
-
 
         ###################
         #### Section 3 ####
@@ -2359,7 +2929,8 @@ class BasinsEA():
             self.maskValue = mask;
             self.bathymetry = field; # FIXME: This might not be the most appropriate way to redefine 'self.bathymetry'
         else:
-            self.maskValue = self.bathymetry;
+            self.maskValue = cp.deepcopy(self.bathymetry);
+            self.maskValue[~np.isnan(self.maskValue)] = 1;
 
     
 
@@ -2489,7 +3060,8 @@ class BasinsEA():
                      reducedRes={"on":False,"factor":15},
                      read=False,
                      write=False,
-                     verbose=True):
+                     verbose=True,
+                     initiation=True):
         """
         defineBasins method will define basins with network analysis
         using either the Girvan-Newman or Louvain algorithm to define
@@ -2642,834 +3214,842 @@ class BasinsEA():
             self.resolution = self.reducedRes*np.diff(self.lon)[0][0];
         
         else:
-            # Only reduce resolution if option is set. Note that this must
-            # be consistent with written network
-            if not reducedRes['on']:
-                self.reducedRes = np.diff(self.lon)[0][0];
-                self.latf = self.lat.flatten();
-                self.lonf = self.lon.flatten();
-                bathymetryf = self.bathymetry.flatten();
-            else:
-                self.reducedRes = reducedRes['factor'];
-                self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
-                self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
-                bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
+            if initiation:
+                # Only reduce resolution if option is set. Note that this must
+                # be consistent with written network
+                if not reducedRes['on']:
+                    self.reducedRes = np.diff(self.lon)[0][0];
+                    self.latf = self.lat.flatten();
+                    self.lonf = self.lon.flatten();
+                    bathymetryf = self.bathymetry.flatten();
+                else:
+                    self.reducedRes = reducedRes['factor'];
+                    self.latf = self.lat[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                    self.lonf = self.lon[::self.reducedRes].T[::self.reducedRes].T.flatten();
+                    bathymetryf = self.bathymetry[::self.reducedRes].T[::self.reducedRes].T.flatten();
 
-            # Readjust resolution if reduced resolution was used.
-            if reducedRes['on']:
+                # Readjust resolution if reduced resolution was used.
+                if reducedRes['on']:
+                    for field in self.Fields['usedFields']:
+                        self.Fields[field]["resolution"] *= reducedRes['factor'];
+
+                ######################
+                ### Create network ###
+                ######################
+                # Define equal area points
+                # eaPoint.lat, eaPoint.lon are created here
+                # Note that only one eaNodes object is need for multiple fields.
+                # Use the first used field to create the object
+                # self.eaPoint.precalculated is set to False is the grid has not been
+                # precalculated. Otherwise the precalculated grid is read in.
+                self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
+                                    precalculate=True,
+                                    precalculated=True);
+                                    
+
+                # Creates
+                # 1) Set of nodes that represent equal area quadrangles.
+                # 2) Define the connects between all nodes (even to nodes
+                # with missing data)
+                if not self.eaPoint.precalculated:
+                    self.eaPoint.makegrid(plotq=0);
+
+                # Rounding to about 1.1 km resolution
+                Spresolution = np.round( np.abs(np.diff(self.lat[:,0])[0]), 5)
+
+                # Loop over all used fields
                 for field in self.Fields['usedFields']:
-                    self.Fields[field]["resolution"] *= reducedRes['factor'];
+                    # Define parameter name
+                    parameter = self.Fields[field]['parameter']
+                    parameterName = self.Fields[field]['parameterName']
+                    parameterOut = "z";
 
-            ######################
-            ### Create network ###
-            ######################
-            # Define equal area points
-            # eaPoint.lat, eaPoint.lon are created here
-            # Note that only one eaNodes object is need for multiple fields.
-            # Use the first used field to create the object
-            # self.eaPoint.precalculated is set to False is the grid has not been
-            # precalculated. Otherwise the precalculated grid is read in.
-            self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
-                                   precalculate=True,
-                                   precalculated=True);
-                                   
+                    # Simplify netCDF4 for interpolation inputPath="path/file.nc", outputPath
+                    self.simplifyNetCDF(inputPath=self.Fields[field]['dataGrid'],
+                                        outputPath='tempSimp_{}.nc'.format(parameterName),
+                                        parameterIn=parameter,
+                                        parameterOut=parameterOut)
+                    
 
-            # Creates
-            # 1) Set of nodes that represent equal area quadrangles.
-            # 2) Define the connects between all nodes (even to nodes
-            # with missing data)
-            if not self.eaPoint.precalculated:
-                self.eaPoint.makegrid(plotq=0);
+                    
+                    # Interpolate from grided nodes to equal area nodes
+                    # Defines self.eaPoint.data with data at equal area nodes.
+                    self.eaPoint.interp2IrregularGrid(path='tempSimp_{}.nc'.format(parameterName),
+                                                    name=parameterOut,
+                                                    resolution=Spresolution)
 
-            # Rounding to about 1.1 km resolution
-            Spresolution = np.round( np.abs(np.diff(self.lat[:,0])[0]), 5)
 
-            # Loop over all used fields
-            for field in self.Fields['usedFields']:
-                # Define parameter name
-                parameter = self.Fields[field]['parameter']
-                parameterName = self.Fields[field]['parameterName']
-                parameterOut = "z";
+                    # Assign interpolated grid and connections to dictionary entry
+                    self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
 
-                # Simplify netCDF4 for interpolation inputPath="path/file.nc", outputPath
-                self.simplifyNetCDF(inputPath=self.Fields[field]['dataGrid'],
-                                    outputPath='tempSimp_{}.nc'.format(parameterName),
-                                    parameterIn=parameter,
-                                    parameterOut=parameterOut)
+                    # Note that connectionNodeIDs are not the same for each field (i.e., there
+                    # is a dependence on where np.nan values exist within
+                    # self.Fields[field]['interpolatedData'].)
+                    self.Fields[field]['connectionNodeIDs'] = self.eaPoint.connectionNodeIDs
+
+                # Assign the field to be used for masking communities when converting
+                # from node spacing to equally-spaced latitude and longitude values.
+                self.setFieldMask(fieldMaskParameter=fieldMaskParameter);
+
+                # Assign new-updated AOC value that reflects the data being fed into the graph network
+                self.AOCMask = np.nansum( self.areaWeights[~np.isnan(self.maskValue)] )
                 
+                # Make a field that liberally defines nodes and connections across all fields.
+                # I.e., even if only one field has data at a node then it will be represented
+                # in all fields. 
+                # However, weighting of node connections later will only be dependent on the
+                # collection of fields that have edges between two nodes with valid data (non-NaNs).
+                #for i
+                # Loop over all used fields
+                #for field in self.Fields['usedFields']:
+                #    self.Fields['DataExist'] = 
 
-                
+
+                ## FIXME: Current area to work on
+
+                ## Merge all fields into a single netCDF: "superImposedFields.nc"
+
+                ### Create a string
+                '''
+                ### 1. Create field that contains the NaNs structure of all the input files.
+                allFields = np.array([], dtype=str);
+                for field in self.Fields['usedFields']:
+                    # Define parameter name
+                    parameterName = self.Fields[field]['parameterName']
+                    # Append field name to string
+                    allFields = np.append( allFields,
+                                            'tempSimp_{}.nc'.format(parameterName)
+                                        )
+                #### i. Create NaN mask command: file1.nc ISNAN file2.nc ISNAN OR ...
+                nan_mask_cmd = []
+                for i, f in enumerate(allFields):
+                    nan_mask_cmd.append(f"{f} ISNAN")
+                    if i > 0:
+                        nan_mask_cmd.append("OR")
+                nan_mask_cmd.append("= nanmask.nc")
+                nan_mask_str = " ".join(nan_mask_cmd)
+
+                ##### ii. Create sum command: file1.nc file2.nc ADD file3.nc ADD ...
+                sum_cmd = [allFields[0]]
+                for f in allFields[1:]:
+                    sum_cmd.append(f)
+                    sum_cmd.append("ADD")
+                sum_cmd.append("= summed.nc")
+                sum_cmd_str = " ".join(sum_cmd)
+
+                ##### iii. Use gmt grdmath to create nanmask.nc
+                os.system("gmt grdmath {}".format(nan_mask_str))
+                print("gmt grdmath {}".format(nan_mask_str))
+                #os.system("gmt grdmath{}".format(sum_cmd_str))
+                #gmt grdmath summed.nc nanmask.nc NAN = output.nc
+
+                ##### iv. 
                 # Interpolate from grided nodes to equal area nodes
                 # Defines self.eaPoint.data with data at equal area nodes.
-                self.eaPoint.interp2IrregularGrid(path='tempSimp_{}.nc'.format(parameterName),
-                                                  name=parameterOut,
-                                                  resolution=Spresolution)
-
+                self.eaPoint.interp2IrregularGrid(path='nanmask.nc',
+                                                    name='z')
+                '''
 
                 # Assign interpolated grid and connections to dictionary entry
-                self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
+                #self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
 
+                ## Run the interp2IrregularGrid method for eaPoints to get connectionNodeIDs
                 # Note that connectionNodeIDs are not the same for each field (i.e., there
                 # is a dependence on where np.nan values exist within
                 # self.Fields[field]['interpolatedData'].)
-                self.Fields[field]['connectionNodeIDs'] = self.eaPoint.connectionNodeIDs
-
-            # Assign the field to be used for masking communities when converting
-            # from node spacing to equally-spaced latitude and longitude values.
-            self.setFieldMask(fieldMaskParameter=fieldMaskParameter);
-            
-            # Make a field that liberally defines nodes and connections across all fields.
-            # I.e., even if only one field has data at a node then it will be represented
-            # in all fields. 
-            # However, weighting of node connections later will only be dependent on the
-            # collection of fields that have edges between two nodes with valid data (non-NaNs).
-            #for i
-            # Loop over all used fields
-            #for field in self.Fields['usedFields']:
-            #    self.Fields['DataExist'] = 
+                #self.connectionNodeIDs = self.eaPoint.connectionNodeIDs
 
 
-            ## FIXME: Current area to work on
+                
+                #self.Fields["MultipleFields"] = False;
+                #self.Fields["FieldCnt"] = 1;
+                #self.Fields["Field1"]
+                # "resolution":
+                # "dataGrid":"{}/{}".format(dataDir, filename)
+                # "parameter": "bathymetry"
+                # "parameterUnit":"m"
+                # "parameterName":"bathymetry"
+                #self.Fields["usedFields"]
 
-            ## Merge all fields into a single netCDF: "superImposedFields.nc"
-
-            ### Create a string
-            '''
-            ### 1. Create field that contains the NaNs structure of all the input files.
-            allFields = np.array([], dtype=str);
-            for field in self.Fields['usedFields']:
-                # Define parameter name
-                parameterName = self.Fields[field]['parameterName']
-                # Append field name to string
-                allFields = np.append( allFields,
-                                        'tempSimp_{}.nc'.format(parameterName)
-                                    )
-            #### i. Create NaN mask command: file1.nc ISNAN file2.nc ISNAN OR ...
-            nan_mask_cmd = []
-            for i, f in enumerate(allFields):
-                nan_mask_cmd.append(f"{f} ISNAN")
-                if i > 0:
-                    nan_mask_cmd.append("OR")
-            nan_mask_cmd.append("= nanmask.nc")
-            nan_mask_str = " ".join(nan_mask_cmd)
-
-            ##### ii. Create sum command: file1.nc file2.nc ADD file3.nc ADD ...
-            sum_cmd = [allFields[0]]
-            for f in allFields[1:]:
-                sum_cmd.append(f)
-                sum_cmd.append("ADD")
-            sum_cmd.append("= summed.nc")
-            sum_cmd_str = " ".join(sum_cmd)
-
-            ##### iii. Use gmt grdmath to create nanmask.nc
-            os.system("gmt grdmath {}".format(nan_mask_str))
-            print("gmt grdmath {}".format(nan_mask_str))
-            #os.system("gmt grdmath{}".format(sum_cmd_str))
-            #gmt grdmath summed.nc nanmask.nc NAN = output.nc
-
-            ##### iv. 
-            # Interpolate from grided nodes to equal area nodes
-            # Defines self.eaPoint.data with data at equal area nodes.
-            self.eaPoint.interp2IrregularGrid(path='nanmask.nc',
-                                                name='z')
-            '''
-
-            # Assign interpolated grid and connections to dictionary entry
-            #self.Fields[field]['interpolatedData'] = self.eaPoint.data[parameterOut]
-
-            ## Run the interp2IrregularGrid method for eaPoints to get connectionNodeIDs
-            # Note that connectionNodeIDs are not the same for each field (i.e., there
-            # is a dependence on where np.nan values exist within
-            # self.Fields[field]['interpolatedData'].)
-            #self.connectionNodeIDs = self.eaPoint.connectionNodeIDs
-
-
-            
-            #self.Fields["MultipleFields"] = False;
-            #self.Fields["FieldCnt"] = 1;
-            #self.Fields["Field1"]
-            # "resolution":
-            # "dataGrid":"{}/{}".format(dataDir, filename)
-            # "parameter": "bathymetry"
-            # "parameterUnit":"m"
-            # "parameterName":"bathymetry"
-            #self.Fields["usedFields"]
-
-            # Iterate over all fields and liberally select all nodes + connections 
-            # Any missing values values. Where one field is represented, but the
-            # other is not will be replaced with np.nan values. These values will
-            # be dealt with in the later weight calculation.
-            # 
-            # Make logical to define which nodes represent at least 1 data-field.
-            firstField = True;
-            for field in self.Fields['usedFields']:
-                # First assign a base field to expand with other fields
-                if firstField:
-                    logicalFields = ~np.isnan(self.Fields[field]['interpolatedData'])
-                    firstField = False;
-                else:
-                    logicalFields = ( logicalFields | ~np.isnan(self.Fields[field]['interpolatedData']) )
-            
-            # Area covered by a node m2. FIXME: might be able to define outside of field-loop.
-            self.areaWeighti = (4*np.pi*(self.radius)**2)/len(self.eaPoint.data[parameterOut]);
-
-            # Remove points with no data at any of the fields
-            allNodes = False;
-            if not allNodes:
-                self.eaPoint.ealat = self.eaPoint.ealat[logicalFields];
-                self.eaPoint.ealon = self.eaPoint.ealon[logicalFields];
-                self.eaPoint.connectionNodeIDs = self.eaPoint.connectionNodeIDs[logicalFields]
+                # Iterate over all fields and liberally select all nodes + connections 
+                # Any missing values values. Where one field is represented, but the
+                # other is not will be replaced with np.nan values. These values will
+                # be dealt with in the later weight calculation.
+                # 
+                # Make logical to define which nodes represent at least 1 data-field.
+                firstField = True;
                 for field in self.Fields['usedFields']:
-                    self.Fields[field]['interpolatedData'] = self.Fields[field]['interpolatedData'][logicalFields];
-            
-            # Define counter and point dictionary
-            cnt = 0.
-            points = {};
-            # Create dictionary and array of bathymetry points
-            pos = np.zeros( (2, len(~np.isnan(self.Fields[field]['interpolatedData']))) );
-            for i in tqdm( range(len(self.eaPoint.ealon)) ):
-                # Create list of values to store in nodes: 
-                nodeAttributes = list([self.eaPoint.ealat[i], self.eaPoint.ealon[i], self.areaWeighti]);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
-                # Add field properties: (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
-                for field in self.Fields['usedFields']:
-                    nodeAttributes.append(self.Fields[field]['interpolatedData'][i])
+                    # First assign a base field to expand with other fields
+                    if firstField:
+                        logicalFields = ~np.isnan(self.Fields[field]['interpolatedData'])
+                        firstField = False;
+                    else:
+                        logicalFields = ( logicalFields | ~np.isnan(self.Fields[field]['interpolatedData']) )
+                
+                # Area covered by a node m2. FIXME: might be able to define outside of field-loop.
+                self.areaWeighti = (4*np.pi*(self.radius)**2)/len(self.eaPoint.data[parameterOut]);
 
-                #if (~np.isnan(bathymetryi)):
-                points[int(cnt)] = tuple(nodeAttributes);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
-                pos[:,int(cnt)] = np.array( [self.eaPoint.ealat[i], self.eaPoint.ealon[i]] ); 
-                # Iterate node counter
-                cnt+=1;
+                # Remove points with no data at any of the fields
+                allNodes = False;
+                if not allNodes:
+                    self.eaPoint.ealat = self.eaPoint.ealat[logicalFields];
+                    self.eaPoint.ealon = self.eaPoint.ealon[logicalFields];
+                    self.eaPoint.connectionNodeIDs = self.eaPoint.connectionNodeIDs[logicalFields]
+                    for field in self.Fields['usedFields']:
+                        self.Fields[field]['interpolatedData'] = self.Fields[field]['interpolatedData'][logicalFields];
+                
+                # Define counter and point dictionary
+                cnt = 0.
+                points = {};
+                # Create dictionary and array of bathymetry points
+                pos = np.zeros( (2, len(~np.isnan(self.Fields[field]['interpolatedData']))) );
+                for i in tqdm( range(len(self.eaPoint.ealon)) ):
+                    # Create list of values to store in nodes: 
+                    nodeAttributes = list([self.eaPoint.ealat[i], self.eaPoint.ealon[i], self.areaWeighti]);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                    # Add field properties: (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                    for field in self.Fields['usedFields']:
+                        nodeAttributes.append(self.Fields[field]['interpolatedData'][i])
 
-            # Calculate the starting index of fields stored in nodes
-            startOfFieldIdx = len(nodeAttributes)-len(self.Fields['usedFields']);
-
-            # Create a graph
-            G = nx.Graph()
-
-            ## Add nodes (points)
-            for node, values in points.items():
-                #if not np.isnan(values[2]):
-                G.add_node(node, pos=values[0:2], areaWeightm2=values[2]);
-                # Add field attributes
-                cnt = 0;
-                for field in self.Fields['usedFields']:
-                    G.nodes[node][field] = values[startOfFieldIdx+cnt]
+                    #if (~np.isnan(bathymetryi)):
+                    points[int(cnt)] = tuple(nodeAttributes);    # (latitude, longitude, areaWeight, Field1, Field2, ..., Fieldn) w/ units (deg, deg, m2, -, -, -)
+                    pos[:,int(cnt)] = np.array( [self.eaPoint.ealat[i], self.eaPoint.ealon[i]] ); 
+                    # Iterate node counter
                     cnt+=1;
 
-            
-            ## Create a list of property difference between connected nodes
-            ### Assign and empty vector to self.dataEdgeDiff 
-            for field in self.Fields['usedFields']:
-                self.Fields[field]['dataEdgeDiff'] = np.array([], dtype=np.float64)
+                # Calculate the starting index of fields stored in nodes
+                startOfFieldIdx = len(nodeAttributes)-len(self.Fields['usedFields']);
 
-            ### Iterate through each node to add edges
-            nodeCnt=0;
-            for i in tqdm(np.arange(len(pos[0,:]))):
-                # Iterate over all nodes
+                # Create a graph
+                G = nx.Graph()
 
-                # Assign all field values to values1 (evalued node)
-                valuesNode = points[int(nodeCnt)][startOfFieldIdx:];
-                #coordsNode = G.nodes[node1]['pos'];
+                ## Add nodes (points)
+                for node, values in points.items():
+                    #if not np.isnan(values[2]):
+                    G.add_node(node, pos=values[0:2], areaWeightm2=values[2]);
+                    # Add field attributes
+                    cnt = 0;
+                    for field in self.Fields['usedFields']:
+                        G.nodes[node][field] = values[startOfFieldIdx+cnt]
+                        cnt+=1;
+
                 
-                # Get connection node ids
-                connections = self.eaPoint.connectionNodeIDs[i,1:]
+                ## Create a list of property difference between connected nodes
+                ### Assign and empty vector to self.dataEdgeDiff 
+                for field in self.Fields['usedFields']:
+                    self.Fields[field]['dataEdgeDiff'] = np.array([], dtype=np.float64)
 
-                for connection in connections:
-                    # Iterate over connections
-                    if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
-                        # Connection found between value1 and value2. This would not happen
-                        # if the connection was to a node over land.
-                        idxConnected = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
-                        nodeConnected = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idxConnected)[0][0]
+                ### Iterate through each node to add edges
+                nodeCnt=0;
+                for i in tqdm(np.arange(len(pos[0,:]))):
+                    # Iterate over all nodes
 
-                        # Assign all field values to values2 (connected node)
-                        valuesConnected = points[int(nodeConnected)][startOfFieldIdx:];
+                    # Assign all field values to values1 (evalued node)
+                    valuesNode = points[int(nodeCnt)][startOfFieldIdx:];
+                    #coordsNode = G.nodes[node1]['pos'];
+                    
+                    # Get connection node ids
+                    connections = self.eaPoint.connectionNodeIDs[i,1:]
 
-                        # Assign difference to dataEdgeDiff vector
-                        cnt=0;
-                        for field in self.Fields['usedFields']:
-                            self.Fields[field]['dataEdgeDiff'] = np.append(self.Fields[field]['dataEdgeDiff'], np.abs(valuesNode[cnt]-valuesConnected[cnt]))
-                            cnt+=1;
+                    for connection in connections:
+                        # Iterate over connections
+                        if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
+                            # Connection found between value1 and value2. This would not happen
+                            # if the connection was to a node over land.
+                            idxConnected = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
+                            nodeConnected = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idxConnected)[0][0]
 
-                # Iterate node counter
-                nodeCnt+=1;
-            
-            ## Remove outliers from self.dataEdgeDiff and calculate std
-            def remove_outliers_iqr(data):
-                """
-                remove_outliers_iqr function removes outliers from 
-                a Numpy array using the IQR method.
+                            # Assign all field values to values2 (connected node)
+                            valuesConnected = points[int(nodeConnected)][startOfFieldIdx:];
 
-                Parameters
-                -----------
-                data : NUMPY ARRAY
-                    The input NumPy array.
+                            # Assign difference to dataEdgeDiff vector
+                            cnt=0;
+                            for field in self.Fields['usedFields']:
+                                self.Fields[field]['dataEdgeDiff'] = np.append(self.Fields[field]['dataEdgeDiff'], np.abs(valuesNode[cnt]-valuesConnected[cnt]))
+                                cnt+=1;
 
-                Returns
-                --------
-                filtered_data : NUMPY ARRAY
-                    A new NumPy array with outliers removed.
-                """
-                q1 = np.nanpercentile(data, 25)
-                q3 = np.nanpercentile(data, 75)
-                iqr = q3 - q1
-                lower_bound = q1 - 1.5 * iqr
-                upper_bound = q3 + 1.5 * iqr
-                filtered_data = data[(data >= lower_bound) & (data <= upper_bound)]
-                return filtered_data
+                    # Iterate node counter
+                    nodeCnt+=1;
+                
+                ## Remove outliers from self.dataEdgeDiff and calculate std
+                def remove_outliers_iqr(data):
+                    """
+                    remove_outliers_iqr function removes outliers from 
+                    a Numpy array using the IQR method.
 
-            for field in self.Fields['usedFields']:
-                ### Get outliers filtered dataEdgeDiff using the IQR method.
-                ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
-                ## This is appropriate since each edge is bidirectional.
-                ## As a result, the mean should be zero.
-                self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr(self.Fields[field]['dataEdgeDiff']);
-                #self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr( np.append(self.Fields[field]['dataEdgeDiff'], -self.Fields[field]['dataEdgeDiff']) );
+                    Parameters
+                    -----------
+                    data : NUMPY ARRAY
+                        The input NumPy array.
 
-                # Calculate standard deivation
-                self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered']) );
-                #self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( self.Fields[field]['dataEdgeDiffIQRFiltered'] );
+                    Returns
+                    --------
+                    filtered_data : NUMPY ARRAY
+                        A new NumPy array with outliers removed.
+                    """
+                    q1 = np.nanpercentile(data, 25)
+                    q3 = np.nanpercentile(data, 75)
+                    iqr = q3 - q1
+                    lower_bound = q1 - 1.5 * iqr
+                    upper_bound = q3 + 1.5 * iqr
+                    filtered_data = data[(data >= lower_bound) & (data <= upper_bound)]
+                    return filtered_data
 
-                ## Define dataRange with dataEdgeDiffIQRFiltered
-                self.Fields[field]['dataEdgeDiffRange'] = np.max(self.Fields[field]['dataEdgeDiffIQRFiltered']) - np.min(self.Fields[field]['dataEdgeDiffIQRFiltered'])
-                 
-                ## Define a dictionary to hold the weight parameters
-                self.Fields[field]['weightMethodPara'] = {};
+                for field in self.Fields['usedFields']:
+                    ### Get outliers filtered dataEdgeDiff using the IQR method.
+                    ## Mirror dataEdgeDiffIQRFiltered about zero when finding the std.
+                    ## This is appropriate since each edge is bidirectional.
+                    ## As a result, the mean should be zero.
+                    self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr(self.Fields[field]['dataEdgeDiff']);
+                    #self.Fields[field]['dataEdgeDiffIQRFiltered'] = remove_outliers_iqr( np.append(self.Fields[field]['dataEdgeDiff'], -self.Fields[field]['dataEdgeDiff']) );
 
-                ## Define the multi field merger method
-                try:
-                    edgeWeightMethod['multiFieldMethod'];
-                except:
-                    edgeWeightMethod['multiFieldMethod'] = "mean";
+                    # Calculate standard deivation
+                    self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered']) );
+                    #self.Fields[field]['dataEdgeDiffSTD'] = np.nanstd( self.Fields[field]['dataEdgeDiffIQRFiltered'] );
 
-                ## Set lower bound for difference value to influence connectivity
-                ## Assuming a normal distribution
-                ## factor = 5: Strength in node connection changes over 84% data with greater variation than the 16% with the lowest variation.
-                ## factor = 4: Strength in node connection changes over 80% data with greater variation than the 20% with the lowest variation.
-                ## factor = 3: Strength in node connection changes over 74% data with greater variation than the 26% with the lowest variation.
-                ## factor = 2: Strength in node connection changes over 57% data with greater variation than the 38% with the lowest variation.
-                ## factor = 1: Strength in node connection changes over 0% data with greater variation than the 68% with the lowest variation.
-                factor = 2;
-                #lowerbound = dataEdgeDiffSTD/factor;
-                self.Fields[field]['weightMethodPara']['lowerbound'] = 0;
-                self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor;
+                    ## Define dataRange with dataEdgeDiffIQRFiltered
+                    self.Fields[field]['dataEdgeDiffRange'] = np.max(self.Fields[field]['dataEdgeDiffIQRFiltered']) - np.min(self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                    
+                    ## Define a dictionary to hold the weight parameters
+                    self.Fields[field]['weightMethodPara'] = {};
 
-                ## Define the std and dataRange to be used in the following calculations of edge weights.
-                useGlobalDifference = False;
-                useEdgeDifference = False;
-                useEdgeGravity = False;
-                useLogistic = False;
-                useNormPDFFittedSigmoid = False;
-                useQTGaussianSigmoid = False;
-                useQTGaussianShiftedGaussianWeightDistribution = True;
+                    ## Define the multi field merger method
+                    try:
+                        edgeWeightMethod['multiFieldMethod'];
+                    except:
+                        edgeWeightMethod['multiFieldMethod'] = "mean";
 
-                if edgeWeightMethod['method'] == "useGlobalDifference":
-                    # Set method
-                    useGlobalDifference = True
-                elif edgeWeightMethod['method'] == "useEdgeDifference":
-                    # Set method
-                    useEdgeDifference = True;
-                elif edgeWeightMethod['method'] == "useEdgeGravity":
-                    # Set method
-                    useEdgeGravity=True;
-                elif edgeWeightMethod['method'] == "useLogistic":
-                    # Set method
-                    useLogistic = True;
+                    ## Set lower bound for difference value to influence connectivity
+                    ## Assuming a normal distribution
+                    ## factor = 5: Strength in node connection changes over 84% data with greater variation than the 16% with the lowest variation.
+                    ## factor = 4: Strength in node connection changes over 80% data with greater variation than the 20% with the lowest variation.
+                    ## factor = 3: Strength in node connection changes over 74% data with greater variation than the 26% with the lowest variation.
+                    ## factor = 2: Strength in node connection changes over 57% data with greater variation than the 38% with the lowest variation.
+                    ## factor = 1: Strength in node connection changes over 0% data with greater variation than the 68% with the lowest variation.
+                    factor = 2;
+                    #lowerbound = dataEdgeDiffSTD/factor;
+                    self.Fields[field]['weightMethodPara']['lowerbound'] = 0;
+                    self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor;
 
-                    # Set method parameters - if not user defined
-                    if not (np.array(list(edgeWeightMethod.keys())) == "S_at_lower").any():
-                        self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
-                    if not (np.array(list(edgeWeightMethod.keys())) == "S_at_upper").any():
-                        self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
-                    if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_lower").any():
-                        self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*1
-                    else:
-                        self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_lower']
-                    if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_upper").any():
-                        self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*2
-                    else:
-                        self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_upper']
-
-                elif edgeWeightMethod['method'] == "useNormPDFFittedSigmoid":
-                    # Set method
-                    useNormPDFFittedSigmoid = True;
-                elif edgeWeightMethod['method'] == "useQTGaussianSigmoid":
-                    # Set method
-                    useQTGaussianSigmoid = True;
-                elif edgeWeightMethod['method'] == "useQTGaussianShiftedGaussianWeightDistribution":
-                    # Set method
+                    ## Define the std and dataRange to be used in the following calculations of edge weights.
+                    useGlobalDifference = False;
+                    useEdgeDifference = False;
+                    useEdgeGravity = False;
+                    useLogistic = False;
+                    useNormPDFFittedSigmoid = False;
+                    useQTGaussianSigmoid = False;
                     useQTGaussianShiftedGaussianWeightDistribution = True;
 
-                    # Set method parameters - if not user defined
-                    ## The factor of standard deviations to shorten the CDF distribution by.
-                    if not (np.array(list(edgeWeightMethod.keys())) == "shortenFactor").any():
-                        edgeWeightMethod['shortenFactor'] = 3;
-                    ## The factor of standard deviations to shift the CDF distribution by.
-                    if not (np.array(list(edgeWeightMethod.keys())) == "shiftFactor").any():
-                        edgeWeightMethod['shiftFactor'] = 1;
-                    ## The minimum value used for edge weights
-                    if not (np.array(list(edgeWeightMethod.keys())) == "minWeight").any():
-                        edgeWeightMethod['minWeight'] = 0.01;
+                    if edgeWeightMethod['method'] == "useGlobalDifference":
+                        # Set method
+                        useGlobalDifference = True
+                    elif edgeWeightMethod['method'] == "useEdgeDifference":
+                        # Set method
+                        useEdgeDifference = True;
+                    elif edgeWeightMethod['method'] == "useEdgeGravity":
+                        # Set method
+                        useEdgeGravity=True;
+                    elif edgeWeightMethod['method'] == "useLogistic":
+                        # Set method
+                        useLogistic = True;
 
-                if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
-                    self.Fields[field]['weightMethodPara']['dataSTD']   = self.Fields[field]['dataEdgeDiffSTD'];
-                    self.Fields[field]['weightMethodPara']['dataRange'] = self.Fields[field]['dataEdgeDiffRange'];
-                    ## Define the weight (S) at the upper bound of values1-values2 difference
-                    self.Fields[field]['weightMethodPara']['S_at_upperbound'] = .05
+                        # Set method parameters - if not user defined
+                        if not (np.array(list(edgeWeightMethod.keys())) == "S_at_lower").any():
+                            self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
+                        if not (np.array(list(edgeWeightMethod.keys())) == "S_at_upper").any():
+                            self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
+                        if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_lower").any():
+                            self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*1
+                        else:
+                            self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_lower']
+                        if not (np.array(list(edgeWeightMethod.keys())) == "factor_at_upper").any():
+                            self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*2
+                        else:
+                            self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*edgeWeightMethod['factor_at_upper']
 
-                    ## Calculate the stretch factor for the exponential decay, such that
-                    ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
-                    self.Fields[field]['weightMethodPara']['stretchEdgeDifference'] = (self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])/np.log(self.Fields[field]['weightMethodPara']['S_at_upperbound'])/self.Fields[field]['weightMethodPara']['dataSTD']
+                    elif edgeWeightMethod['method'] == "useNormPDFFittedSigmoid":
+                        # Set method
+                        useNormPDFFittedSigmoid = True;
+                    elif edgeWeightMethod['method'] == "useQTGaussianSigmoid":
+                        # Set method
+                        useQTGaussianSigmoid = True;
+                    elif edgeWeightMethod['method'] == "useQTGaussianShiftedGaussianWeightDistribution":
+                        # Set method
+                        useQTGaussianShiftedGaussianWeightDistribution = True;
 
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+                        # Set method parameters - if not user defined
+                        ## The factor of standard deviations to shorten the CDF distribution by.
+                        if not (np.array(list(edgeWeightMethod.keys())) == "shortenFactor").any():
+                            edgeWeightMethod['shortenFactor'] = 3;
+                        ## The factor of standard deviations to shift the CDF distribution by.
+                        if not (np.array(list(edgeWeightMethod.keys())) == "shiftFactor").any():
+                            edgeWeightMethod['shiftFactor'] = 1;
+                        ## The minimum value used for edge weights
+                        if not (np.array(list(edgeWeightMethod.keys())) == "minWeight").any():
+                            edgeWeightMethod['minWeight'] = 0.01;
 
-                elif useGlobalDifference and not (useEdgeDifference or useEdgeGravity):
-                    ## Define the range of input node edge values
-                    self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
+                    if useEdgeDifference and not (useGlobalDifference | useEdgeGravity):
+                        self.Fields[field]['weightMethodPara']['dataSTD']   = self.Fields[field]['dataEdgeDiffSTD'];
+                        self.Fields[field]['weightMethodPara']['dataRange'] = self.Fields[field]['dataEdgeDiffRange'];
+                        ## Define the weight (S) at the upper bound of values1-values2 difference
+                        self.Fields[field]['weightMethodPara']['S_at_upperbound'] = .05
 
-                    ## Define the std of the input node edge values. Node should be
-                    ## representing equal area, so no weights for the std need to be defined.
-                    self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
+                        ## Calculate the stretch factor for the exponential decay, such that
+                        ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                        self.Fields[field]['weightMethodPara']['stretchEdgeDifference'] = (self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])/np.log(self.Fields[field]['weightMethodPara']['S_at_upperbound'])/self.Fields[field]['weightMethodPara']['dataSTD']
 
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -1;
 
-                elif useEdgeGravity and not (useEdgeDifference or useGlobalDifference):
-                    ## Define the range of input node edge values
-                    self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
+                    elif useGlobalDifference and not (useEdgeDifference or useEdgeGravity):
+                        ## Define the range of input node edge values
+                        self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
 
-                    ## Define the std of the input node edge values. Node should be
-                    ## representing equal area, so no weights for the std need to be defined.
-                    self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
+                        ## Define the std of the input node edge values. Node should be
+                        ## representing equal area, so no weights for the std need to be defined.
+                        self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
 
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -2;
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -1;
 
-                elif useLogistic:
-                    # Create attribute dictionary for logistic edge weight method
-                    self.Fields[field]['weightMethodPara']['logisticAttributes'] = {};
+                    elif useEdgeGravity and not (useEdgeDifference or useGlobalDifference):
+                        ## Define the range of input node edge values
+                        self.Fields[field]['weightMethodPara']['dataRange'] = np.nanmax(self.Fields[field]['interpolatedData'])-np.nanmin(self.Fields[field]['interpolatedData']);
 
-                    # Define some attributes for the logistic edge weight method
-                    # S(property_difference=lowerbound) = S_at_lower
-                    # S(property_difference=upperbound) = S_at_upper
-                    self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
-                    self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
-                    self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']
-                    self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor
+                        ## Define the std of the input node edge values. Node should be
+                        ## representing equal area, so no weights for the std need to be defined.
+                        self.Fields[field]['weightMethodPara']['dataSTD'] = np.nanstd(self.Fields[field]['interpolatedData']);
 
-                    # Define attributes for the logistic edge weight method
-                    # logisticAttributes["L"]       : Maximum value of logistic curve
-                    # logisticAttributes["k"]       : Controls rate of change of curve 
-                    # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
-                    self.Fields[field]['weightMethodPara']['logisticAttributes']["L"] = 1
-                    
-                    xl = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_upper'])/self.Fields[field]['weightMethodPara']['S_at_upper'] )
-                    xu = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_lower'])/self.Fields[field]['weightMethodPara']['S_at_lower'] )
-                    self.Fields[field]['weightMethodPara']['logisticAttributes']["k"] = -1*(xl-xu)/(self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])
-                    self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"] = self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*self.Fields[field]['weightMethodPara']['lowerbound'] + xl
-                    
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
-                    
-                elif useNormPDFFittedSigmoid:
-                    # Import
-                    from scipy.stats import norm
-                    from scipy.optimize import curve_fit
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -2;
 
-                    # Define sigmoid function for fitting
-                    def sigmoid(x, L, k, s):
-                        '''
+                    elif useLogistic:
+                        # Create attribute dictionary for logistic edge weight method
+                        self.Fields[field]['weightMethodPara']['logisticAttributes'] = {};
+
+                        # Define some attributes for the logistic edge weight method
+                        # S(property_difference=lowerbound) = S_at_lower
+                        # S(property_difference=upperbound) = S_at_upper
+                        self.Fields[field]['weightMethodPara']['S_at_lower'] = 0.1;
+                        self.Fields[field]['weightMethodPara']['S_at_upper'] = 0.9;
+                        self.Fields[field]['weightMethodPara']['lowerbound'] = self.Fields[field]['dataEdgeDiffSTD']
+                        self.Fields[field]['weightMethodPara']['upperbound'] = self.Fields[field]['dataEdgeDiffSTD']*factor
+
+                        # Define attributes for the logistic edge weight method
+                        # logisticAttributes["L"]       : Maximum value of logistic curve
+                        # logisticAttributes["k"]       : Controls rate of change of curve 
+                        # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                        self.Fields[field]['weightMethodPara']['logisticAttributes']["L"] = 1
                         
-                        '''
-                        y = -L / (1 + np.exp(-k*np.abs(x)+s))
-                        return y
-
-                    # Calculate the PDF with data mirror at zero. Mirroring is
-                    # done since dataEdgeDiffIQRFiltered is constructed as
-                    # np.abs(value1-value2).
-                    self.Fields[field]['weightMethodPara']['pdf'] = \
-                        norm.pdf(np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
-                                          -self.Fields[field]['dataEdgeDiffIQRFiltered']),
-                                0,
-                                self.Fields[field]['dataEdgeDiffSTD'])
-
-                    ## Initial guess for parameters
-                    ## These need to be automatically chosen in an appropriate way: FIXME
-                    self.Fields[field]['weightMethodPara']['p0'] = \
-                        [max(self.Fields[field]['dataEdgeDiffIQRFiltered']),
-                        self.Fields[field]['dataEdgeDiffSTD'],
-                        self.Fields[field]['dataEdgeDiffSTD']]
-
-                    ## Fit the curve for data mirror at zero. Mirroring is
-                    # done since the pdf is constructed with mirrored
-                    # data.
-                    self.Fields[field]['weightMethodPara']['popt'], self.Fields[field]['weightMethodPara']['pcov'] = \
-                        curve_fit(sigmoid,
-                                  np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
-                                            -self.Fields[field]['dataEdgeDiffIQRFiltered']),
-                                  self.Fields[field]['weightMethodPara']['pdf'],
-                                  self.Fields[field]['weightMethodPara']['p0'],
-                                  method='trf')
-                    
-                    verbose = True;
-                    if verbose:
-                        xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
-                        # Plot subplot
-                        fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True);
-                        # Compare pdf w/ sigmoid function 
-                        plt.sca(axes[0])
-                        plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf']/np.max(self.Fields[field]['weightMethodPara']['pdf']), 'b.', alpha=1, label='pdf');
-                        plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt'])/sigmoid(0, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
-                        plt.ylabel("Normalized weight")
-
-                        # Compare pdf, sigmoid, and original distribution of values
-                        plt.sca(axes[1])
-                        plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf'], 'b.', alpha=1, label='pdf');
-                        plt.hist(xValues, alpha=.4, bins=np.linspace(np.min(xValues), np.max(xValues), 30), label='Data', density=True);
-                        plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
-                        plt.ylabel("UnNormalized weight")
+                        xl = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_upper'])/self.Fields[field]['weightMethodPara']['S_at_upper'] )
+                        xu = np.log( (self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]-self.Fields[field]['weightMethodPara']['S_at_lower'])/self.Fields[field]['weightMethodPara']['S_at_lower'] )
+                        self.Fields[field]['weightMethodPara']['logisticAttributes']["k"] = -1*(xl-xu)/(self.Fields[field]['weightMethodPara']['lowerbound']-self.Fields[field]['weightMethodPara']['upperbound'])
+                        self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"] = self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*self.Fields[field]['weightMethodPara']['lowerbound'] + xl
                         
-                        # Plot formatting
-                        plt.legend();
-                        plt.xminBasinCntlabel("Difference in Node Property");
-                        plt.show();
-                    verbose = False;
-
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
-
-                elif useQTGaussianSigmoid or useQTGaussianShiftedGaussianWeightDistribution:
-                    # Create difference data to Gaussian transform
-                    from sklearn.preprocessing import QuantileTransformer
-                    
-                    xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
-                    #xValues = cp.deepcopy(self.Fields[field]['dataEdgeDiffIQRFiltered'])
-                    self.Fields[field]['weightMethodPara']['qt'] = \
-                        QuantileTransformer(n_quantiles=1000,
-                                            random_state=0,
-                                            output_distribution='normal')
-                    qtDiss  = self.Fields[field]['weightMethodPara']['qt'].fit_transform(np.reshape(xValues, (len(xValues),1)))
-
-                    verbose = True;
-                    if verbose:
-                        # Create a set of equal space values in the data domain
-                        # These can be plotted on the gaussian domain to see the data stretching
-                        bins   = np.linspace(np.min(xValues), np.max(xValues), 20);
-                        binsqt = self.Fields[field]['weightMethodPara']['qt'].transform(np.reshape(bins, (len(bins),1)))
-
-                        # Plot subplot
-                        fig, axes = plt.subplots(nrows=2, ncols=1);
-                        # QT distribution
-                        plt.sca(axes[0])
-                        plt.hist(qtDiss, alpha=1, bins=np.arange(-6, 6, .1), label='DataFilter', density=True)
-                        plt.vlines(x=binsqt, ymin=0, ymax=0.4, colors='r', alpha=.2)
-
-                        # Compare original vs QT 
-                        plt.sca(axes[1])
-                        hist = plt.hist(xValues, alpha=.4, bins=bins, label='DataFilter', density=True)
-                        plt.vlines(x=bins, ymin=0, ymax=np.max(hist[0]), colors='r', alpha=.2)
-                        qtxValues = self.Fields[field]['weightMethodPara']['qt'].inverse_transform(qtDiss)
-                        plt.hist(qtxValues, alpha=.4, bins=bins, label='QT to data', density=True);
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -1;
                         
-                        plt.ylabel("UnNormalized weight")
+                    elif useNormPDFFittedSigmoid:
+                        # Import
+                        from scipy.stats import norm
+                        from scipy.optimize import curve_fit
 
-                        # Plot formatting
-                        plt.legend();
-                        plt.xlabel("Difference in Node Property");
-                        plt.show();
-                    verbose = False;
-
-                    # Create attribute dictionary for logistic edge weight method
-                    logisticAttributes = {};
-
-                    # Define some attributes for the logistic edge weight method
-                    # S(property_difference=lowerbound) = S_at_lower
-                    # S(property_difference=upperbound) = S_at_upper
-                    S_at_lower = 0.1;
-                    S_at_upper = 0.9;
-                    # Note that this assumes of QT Gaussian transformed data
-                    # have a stand deviation of 1. This should be approximately
-                    # true if the transform is sucessful.
-                    self.Fields[field]['weightMethodPara']['qtDissSTD'] = np.std(qtDiss)
-                    #lowerbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*1
-                    #upperbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*2
-
-                    # Define attributes for the logistic edge weight method
-                    # logisticAttributes["L"]       : Maximum value of logistic curve
-                    # logisticAttributes["k"]       : Controls rate of change of curve 
-                    # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
-                    #logisticAttributes["L"] = 1
-                    #xl = np.log( (logisticAttributes["L"]-S_at_upper)/S_at_upper )
-                    #xu = np.log( (logisticAttributes["L"]-S_at_lower)/S_at_lower )
-                    #logisticAttributes["k"] = -1*(xl-xu)/(lowerbound-upperbound)
-                    #logisticAttributes["shift"] = logisticAttributes["k"]*lowerbound + xl
-
-                    # Set distance power
-                    self.Fields[field]['weightMethodPara']['disPower'] = -1;
-
-                    # Imports
-                    from scipy import stats
-
-                else:
-                    print("No method chosen.")
-
-            ## Iterate through each node to add edges
-            node1=0;
-            for i in tqdm(np.arange(len(pos[0,:]))):
-                # Iterate over all nodes
-
-                # Assign bathymetryi 
-                values1 = points[int(node1)][startOfFieldIdx:];
-                coords1 = G.nodes[node1]['pos'];
-                
-                # Get connection node ids
-                connections = self.eaPoint.connectionNodeIDs[i,1:]
-
-                for connection in connections:
-                    # Iterate over connections
-
-                    if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
-                        # Connection found between value1 and value2. This would not happen
-                        # if the connection was to a node over land.
-                        idx2 = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
-                        node2 = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idx2)[0][0]
-
-                        # Assign bathymetryj
-                        values2 = points[int(node2)][startOfFieldIdx:];
-
-
-                        if useGlobalDifference:
-                            # FIXME: Update for multiple fields
-                            # Determine average property (e.g., bathymetry) between two nodes.
-                            # propertyAve= (values1+values2)/2;
-                            # Determine the minimum property (e.g., bathymetry) between two nodes.
-                            # propertyMin= np.min(np.array([values1, values2]))
-                            # Determine the absolute value of the inverse difference between two
-                            # node properties. Set propertyInv to range of global data for values
-                            # that are the same. Then normalize by the range 
-                            SInv = 1/np.abs((values1-values2))
-                            if np.isinf(SInv):
-                                SInv = 1;
-
-                            # Determine Exponential decaying property weight between two
-                            stretch = .2
-                            SExp = ( np.exp( (np.abs(dataRange) - np.abs(values1-values2))/(stretch*dataSTD) ) ) / np.exp( (np.abs(dataRange)/(stretch*dataSTD) ) )
-
-                            # Calculate parabolic relationship for weight (AijExp and AijExpdata)
-                            ## BreakPoint for exp-parabolic relationship change
-                            breakPointWeight = stretch; # should be set to where curves are equal
-                            breakPointWeight = 1
-                            breakPointDiff = (dataRange - (stretch*dataSTD)*np.log(breakPointWeight*np.exp(dataRange/(stretch*dataSTD))) )
-
-                            ## Recalse Inverse weight 
-                            if not (breakPointWeight == 1):
-                                SInv     = SInv    * (breakPointWeight*breakPointDiff)
-
-                            ## Use inverse weight if difference in values are large.
-                            if SExp<breakPointWeight:
-                                S = SInv;
-                            elif SExp>=breakPointWeight:
-                                S = SExp;
-
-                            # Note that setting the breakPointWeight to the following values
-                            # has the following affect
-                            #
-                            # breakPointWeight = 0       --> Uses only Exponential relationship
-                            # breakPointWeight > 1       --> Uses only Inverse relationship
-                            # 0 < breakPointWeight < 1   --> Uses both Exponential & Inverse relationship. Used relationship depends on how similar properties are.
-                        elif useEdgeDifference:
-                            # FIXME: Update for multiple fields
-                            ## Define the upper and lower bound of the property difference (np.abs(values1-values2))
-                            ## for an exponentially decaying of weight is calculated.
-                            ## Value is calculated above.
-                            # lowerbound = dataEdgeDiffSTD*factor;
-                            # upperbound = dataEdgeDiffSTD/factor;
+                        # Define sigmoid function for fitting
+                        def sigmoid(x, L, k, s):
+                            '''
                             
-                            ## Define the weight (S) at the upper bound of values1-values2 difference
-                            ## Value is set above.
-                            # S_at_upperbound = .1
+                            '''
+                            y = -L / (1 + np.exp(-k*np.abs(x)+s))
+                            return y
 
-                            ## Calculate the stretch factor for the exponential decay, such that
-                            ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
-                            ## Value is calculated above.
-                            # stretchEdgeDifference = (lowerbound-upperbound)/np.log(S_at_upperbound)/dataSTD
+                        # Calculate the PDF with data mirror at zero. Mirroring is
+                        # done since dataEdgeDiffIQRFiltered is constructed as
+                        # np.abs(value1-value2).
+                        self.Fields[field]['weightMethodPara']['pdf'] = \
+                            norm.pdf(np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
+                                            -self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                                    0,
+                                    self.Fields[field]['dataEdgeDiffSTD'])
 
-                            ## Calculate the weight 
-                            S  = ( np.exp( (np.abs(dataRange) - (0+np.abs(values1-values2)))/(stretchEdgeDifference*dataSTD) ) );
+                        ## Initial guess for parameters
+                        ## These need to be automatically chosen in an appropriate way: FIXME
+                        self.Fields[field]['weightMethodPara']['p0'] = \
+                            [max(self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                            self.Fields[field]['dataEdgeDiffSTD'],
+                            self.Fields[field]['dataEdgeDiffSTD']]
 
-                            ## If value is within lowerbound distance then set connection strength to a value that
-                            ## normalizes to 1.
-                            if np.abs(values1-values2)<=lowerbound:
-                                S = np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
-
-                            ## Normalize weights to weight value at lowerbound
-                            S /= np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
-
-                            ## Set minimum S value to S_at_upperbound
-                            if S < S_at_upperbound:
-                                S = S_at_upperbound;
-
-                        elif useEdgeGravity:
-                            # FIXME: Update for multiple fields
-                            # Note that the gravity model represents node edges weights
-                            # with (property1*property2)/(distanceV**2).
-
-                            # Calculate the product of the property weights:
-                            # The inverse distance squared is added with the
-                            # later calculated nodeSpacingNormalizer.
-                            S = values1*values2;
-
-                        elif useLogistic:
-
-                            # Create an array to hold edge weights for each input field
-                            Ss = np.ones(len(values1));
-                            Ss[:] = np.nan;
-
-                            # Iterate over all the data fields stored within nodes
-                            cnt=0
-                            for value1, value2 in zip(values1, values2):
-                                if np.isnan(value1) | np.isnan(value2):
-                                    # If current node or connecting node do not have a data field value
-                                    # (i.e. don't have a connecting edge).
-                                    cnt+=1
-                                    continue
-                                else:
-                                    # If current node or connecting node both have a data field value
-                                    # (i.e. have a connecting edge).
-                                    
-                                    # Define current working field
-                                    field = self.Fields["usedFields"][cnt];
-
-                                    # Difference in properties at nodes
-                                    diff = np.abs(value1-value2)
-
-                                    # Use the logistic function to calculated the edge weight component S.
-                                    Ss[cnt] = self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]*(1+np.exp(-self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*diff+self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"]))**(-1)
-
-                                    # Move data field index
-                                    cnt+=1
-
-                            # Merge field weights, default is mean
-                            if edgeWeightMethod['multiFieldMethod'] == "prod":
-                                # Take the product of all fields
-                                S = np.nanprod(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "min":
-                                # Take the max of all fields
-                                S = np.nanmin(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "max":
-                                # Take the min of all fields
-                                S = np.nanmax(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "mean":
-                                # Take the mean of all fields
-                                S = np.nanmean(Ss)
-
-
-                        elif useNormPDFFittedSigmoid:
-                            # FIXME: Update for multiple fields
-                            # Difference in properties at nodes
-                            diff = np.abs(values1-values2)
-                            # Use the pdf fitted sigmoid function
-                            # to calculate the edge weight component S.
-                            S = sigmoid(diff, *self.popt)
-
-                        elif useQTGaussianSigmoid:
-                            # FIXME: Update for multiple fields
-                            # Difference in properties at nodes
-                            diff = np.abs(values1-values2);
-                            # Transform from diff-space to gaussian-space
-                            QTGdiff = qt.transform( np.reshape( np.array(diff), (1,1) ) );
-
-                            # Apply stretch factor after QTGdiff is defined with a Guassian Transformer.
-                            # This will give less weight to tail values of the distribution
-                            QTGdiffStretch = 0.1; # Decimal percentage to stretch the QTGdiff value.
-                            QTGdiff *= (1 + QTGdiffStretch);
-
-                            # Use the logistic function to calculated the edge weight component S.
-                            S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*QTGdiff+logisticAttributes["shift"]))**(-1)
-
-                        elif useQTGaussianShiftedGaussianWeightDistribution:
-                            # This method does the following to calculate weights
-                            # 1. Filter outliers from difference data (using IQR method)
-                            # 2. Convert difference data into gaussian (using QT method)
-                            # 3. Calculate z-score of difference data between nodei and nodej
-                            # 4. Given the z-score from step 3) calculate a CDF (0-1) value on a
-                            # new distribution centered at 1 sigma (from the first distribution)
-                            # and with a std of sigma/2 (from the first distribution).
-                            # 4. Define weight as S=(1-CDF) 
-
-
-                            # Create an array to hold edge weights for each input field 
-                            Ss = np.ones(len(values1));
-                            Ss[:] = np.nan;
-
-                            # Iterate over all the data fields stored within nodes
-                            cnt=0
-                            for value1, value2 in zip(values1, values2):
-                                if np.isnan(value1) | np.isnan(value2):
-                                    # If current node or connecting node do not have a data field value
-                                    # (i.e. don't have a connecting edge).
-                                    cnt+=1
-                                    continue
-                                else:
-                                    # If current node or connecting node both have a data field value
-                                    # (i.e. have a connecting edge).
-
-                                    # The factor of standard deviations to shorten the CDF distribution by.
-                                    shortenFactor = edgeWeightMethod['shortenFactor']
-                                    # The factor of standard deviations to shift the CDF distribution by.
-                                    shiftFactor = edgeWeightMethod['shiftFactor']
-
-                                    # Difference in properties at nodes
-                                    diff = np.abs(value1-value2);
-                                    # Transform from diff-space to gaussian-space
-                                    QTGdiff = self.Fields[field]['weightMethodPara']['qt'].transform( np.reshape( np.array(diff), (1,1) ) );
-                                    # Get probablity in stretched distribution
-                                    cdfCenter  = self.Fields[field]['weightMethodPara']['qtDissSTD']*shiftFactor
-                                    cdfStretch = self.Fields[field]['weightMethodPara']['qtDissSTD']/shortenFactor
-                                    CDF = stats.norm.cdf(QTGdiff, loc=cdfCenter, scale=cdfStretch)
-                                    # Divide by probablity in normal distribution. This
-                                    # scales probablility between 0-1.
-                                    # Note that:
-                                    #   S->1 for |value1 - value2|-> 0   and
-                                    #   S->0 for |value1 - value2|-> inf
-                                    Ss[cnt] = ( (1-CDF) + edgeWeightMethod['minWeight'] )/(edgeWeightMethod['minWeight']+1);
-
-                                    # Move data field index
-                                    cnt+=1
-
-                            # Merge field weights, default is mean
-                            if edgeWeightMethod['multiFieldMethod'] == "prod":
-                                # Take the product of all fields
-                                S = np.nanprod(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "min":
-                                # Take the max of all fields
-                                S = np.nanmin(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "max":
-                                # Take the min of all fields
-                                S = np.nanmax(Ss)
-                            elif edgeWeightMethod['multiFieldMethod'] == "mean":
-                                # Take the mean of all fields
-                                S = np.nanmean(Ss)
-
-                        # Note that this weight contains node spacing information
-                        # (i.e., change in node density with latitude and increased \
-                        # strength in with high latitude... )
-                        coords2 = G.nodes[node2]['pos'];
-                        distanceV = haversine_distance(coords1[0], coords1[1],
-                                                       coords2[0], coords2[1],
-                                                       1);
-                        nodeSpacingNormalizer = distanceV**self.Fields[field]['weightMethodPara']['disPower'];
+                        ## Fit the curve for data mirror at zero. Mirroring is
+                        # done since the pdf is constructed with mirrored
+                        # data.
+                        self.Fields[field]['weightMethodPara']['popt'], self.Fields[field]['weightMethodPara']['pcov'] = \
+                            curve_fit(sigmoid,
+                                    np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'],
+                                                -self.Fields[field]['dataEdgeDiffIQRFiltered']),
+                                    self.Fields[field]['weightMethodPara']['pdf'],
+                                    self.Fields[field]['weightMethodPara']['p0'],
+                                    method='trf')
                         
+                        verbose = True;
+                        if verbose:
+                            xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                            # Plot subplot
+                            fig, axes = plt.subplots(nrows=2, ncols=1, sharex=True);
+                            # Compare pdf w/ sigmoid function 
+                            plt.sca(axes[0])
+                            plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf']/np.max(self.Fields[field]['weightMethodPara']['pdf']), 'b.', alpha=1, label='pdf');
+                            plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt'])/sigmoid(0, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
+                            plt.ylabel("Normalized weight")
 
-                        # Set edge
-                        G.add_edge(node1, node2, bathyAve=S*nodeSpacingNormalizer);
+                            # Compare pdf, sigmoid, and original distribution of values
+                            plt.sca(axes[1])
+                            plt.plot(xValues, self.Fields[field]['weightMethodPara']['pdf'], 'b.', alpha=1, label='pdf');
+                            plt.hist(xValues, alpha=.4, bins=np.linspace(np.min(xValues), np.max(xValues), 30), label='Data', density=True);
+                            plt.plot(xValues, sigmoid(xValues, *self.Fields[field]['weightMethodPara']['popt']), 'r.', alpha=1, label='sigmoid');
+                            plt.ylabel("UnNormalized weight")
+                            
+                            # Plot formatting
+                            plt.legend();
+                            plt.xminBasinCntlabel("Difference in Node Property");
+                            plt.show();
+                        verbose = False;
 
-                # Iterate node counter
-                node1+=1;
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                    elif useQTGaussianSigmoid or useQTGaussianShiftedGaussianWeightDistribution:
+                        # Create difference data to Gaussian transform
+                        from sklearn.preprocessing import QuantileTransformer
+                        
+                        xValues = np.append(self.Fields[field]['dataEdgeDiffIQRFiltered'], -self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                        #xValues = cp.deepcopy(self.Fields[field]['dataEdgeDiffIQRFiltered'])
+                        self.Fields[field]['weightMethodPara']['qt'] = \
+                            QuantileTransformer(n_quantiles=1000,
+                                                random_state=0,
+                                                output_distribution='normal')
+                        qtDiss  = self.Fields[field]['weightMethodPara']['qt'].fit_transform(np.reshape(xValues, (len(xValues),1)))
+
+                        verbose = True;
+                        if verbose:
+                            # Create a set of equal space values in the data domain
+                            # These can be plotted on the gaussian domain to see the data stretching
+                            bins   = np.linspace(np.min(xValues), np.max(xValues), 20);
+                            binsqt = self.Fields[field]['weightMethodPara']['qt'].transform(np.reshape(bins, (len(bins),1)))
+
+                            # Plot subplot
+                            fig, axes = plt.subplots(nrows=2, ncols=1);
+                            # QT distribution
+                            plt.sca(axes[0])
+                            plt.hist(qtDiss, alpha=1, bins=np.arange(-6, 6, .1), label='DataFilter', density=True)
+                            plt.vlines(x=binsqt, ymin=0, ymax=0.4, colors='r', alpha=.2)
+
+                            # Compare original vs QT 
+                            plt.sca(axes[1])
+                            hist = plt.hist(xValues, alpha=.4, bins=bins, label='DataFilter', density=True)
+                            plt.vlines(x=bins, ymin=0, ymax=np.max(hist[0]), colors='r', alpha=.2)
+                            qtxValues = self.Fields[field]['weightMethodPara']['qt'].inverse_transform(qtDiss)
+                            plt.hist(qtxValues, alpha=.4, bins=bins, label='QT to data', density=True);
+                            
+                            plt.ylabel("UnNormalized weight")
+
+                            # Plot formatting
+                            plt.legend();
+                            plt.xlabel("Difference in Node Property");
+                            plt.show();
+                        verbose = False;
+
+                        # Create attribute dictionary for logistic edge weight method
+                        logisticAttributes = {};
+
+                        # Define some attributes for the logistic edge weight method
+                        # S(property_difference=lowerbound) = S_at_lower
+                        # S(property_difference=upperbound) = S_at_upper
+                        S_at_lower = 0.1;
+                        S_at_upper = 0.9;
+                        # Note that this assumes of QT Gaussian transformed data
+                        # have a stand deviation of 1. This should be approximately
+                        # true if the transform is sucessful.
+                        self.Fields[field]['weightMethodPara']['qtDissSTD'] = np.std(qtDiss)
+                        #lowerbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*1
+                        #upperbound = self.Fields[field]['weightMethodPara']['qtDissSTD']*2
+
+                        # Define attributes for the logistic edge weight method
+                        # logisticAttributes["L"]       : Maximum value of logistic curve
+                        # logisticAttributes["k"]       : Controls rate of change of curve 
+                        # logisticAttributes["shift"]   : Controls the range of values with near logisticAttributes["L"] values.
+                        #logisticAttributes["L"] = 1
+                        #xl = np.log( (logisticAttributes["L"]-S_at_upper)/S_at_upper )
+                        #xu = np.log( (logisticAttributes["L"]-S_at_lower)/S_at_lower )
+                        #logisticAttributes["k"] = -1*(xl-xu)/(lowerbound-upperbound)
+                        #logisticAttributes["shift"] = logisticAttributes["k"]*lowerbound + xl
+
+                        # Set distance power
+                        self.Fields[field]['weightMethodPara']['disPower'] = -1;
+
+                        # Imports
+                        from scipy import stats
+
+                    else:
+                        print("No method chosen.")
+
+                ## Iterate through each node to add edges
+                node1=0;
+                for i in tqdm(np.arange(len(pos[0,:]))):
+                    # Iterate over all nodes
+
+                    # Assign bathymetryi 
+                    values1 = points[int(node1)][startOfFieldIdx:];
+                    coords1 = G.nodes[node1]['pos'];
+                    
+                    # Get connection node ids
+                    connections = self.eaPoint.connectionNodeIDs[i,1:]
+
+                    for connection in connections:
+                        # Iterate over connections
+
+                        if (connection==self.eaPoint.connectionNodeIDs[:,0]).any():
+                            # Connection found between value1 and value2. This would not happen
+                            # if the connection was to a node over land.
+                            idx2 = self.eaPoint.connectionNodeIDs[:,0][connection==self.eaPoint.connectionNodeIDs[:,0]][0]
+                            node2 = np.argwhere(self.eaPoint.connectionNodeIDs[:,0]==idx2)[0][0]
+
+                            # Assign bathymetryj
+                            values2 = points[int(node2)][startOfFieldIdx:];
+
+
+                            if useGlobalDifference:
+                                # FIXME: Update for multiple fields
+                                # Determine average property (e.g., bathymetry) between two nodes.
+                                # propertyAve= (values1+values2)/2;
+                                # Determine the minimum property (e.g., bathymetry) between two nodes.
+                                # propertyMin= np.min(np.array([values1, values2]))
+                                # Determine the absolute value of the inverse difference between two
+                                # node properties. Set propertyInv to range of global data for values
+                                # that are the same. Then normalize by the range 
+                                SInv = 1/np.abs((values1-values2))
+                                if np.isinf(SInv):
+                                    SInv = 1;
+
+                                # Determine Exponential decaying property weight between two
+                                stretch = .2
+                                SExp = ( np.exp( (np.abs(dataRange) - np.abs(values1-values2))/(stretch*dataSTD) ) ) / np.exp( (np.abs(dataRange)/(stretch*dataSTD) ) )
+
+                                # Calculate parabolic relationship for weight (AijExp and AijExpdata)
+                                ## BreakPoint for exp-parabolic relationship change
+                                breakPointWeight = stretch; # should be set to where curves are equal
+                                breakPointWeight = 1
+                                breakPointDiff = (dataRange - (stretch*dataSTD)*np.log(breakPointWeight*np.exp(dataRange/(stretch*dataSTD))) )
+
+                                ## Recalse Inverse weight 
+                                if not (breakPointWeight == 1):
+                                    SInv     = SInv    * (breakPointWeight*breakPointDiff)
+
+                                ## Use inverse weight if difference in values are large.
+                                if SExp<breakPointWeight:
+                                    S = SInv;
+                                elif SExp>=breakPointWeight:
+                                    S = SExp;
+
+                                # Note that setting the breakPointWeight to the following values
+                                # has the following affect
+                                #
+                                # breakPointWeight = 0       --> Uses only Exponential relationship
+                                # breakPointWeight > 1       --> Uses only Inverse relationship
+                                # 0 < breakPointWeight < 1   --> Uses both Exponential & Inverse relationship. Used relationship depends on how similar properties are.
+                            elif useEdgeDifference:
+                                # FIXME: Update for multiple fields
+                                ## Define the upper and lower bound of the property difference (np.abs(values1-values2))
+                                ## for an exponentially decaying of weight is calculated.
+                                ## Value is calculated above.
+                                # lowerbound = dataEdgeDiffSTD*factor;
+                                # upperbound = dataEdgeDiffSTD/factor;
+                                
+                                ## Define the weight (S) at the upper bound of values1-values2 difference
+                                ## Value is set above.
+                                # S_at_upperbound = .1
+
+                                ## Calculate the stretch factor for the exponential decay, such that
+                                ## S(lowerbound) = 1 and S(upperbound) = S_at_upperbound.
+                                ## Value is calculated above.
+                                # stretchEdgeDifference = (lowerbound-upperbound)/np.log(S_at_upperbound)/dataSTD
+
+                                ## Calculate the weight 
+                                S  = ( np.exp( (np.abs(dataRange) - (0+np.abs(values1-values2)))/(stretchEdgeDifference*dataSTD) ) );
+
+                                ## If value is within lowerbound distance then set connection strength to a value that
+                                ## normalizes to 1.
+                                if np.abs(values1-values2)<=lowerbound:
+                                    S = np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                                ## Normalize weights to weight value at lowerbound
+                                S /= np.exp( ((np.abs(dataRange)- (lowerbound))/(stretchEdgeDifference*dataSTD) ) );
+
+                                ## Set minimum S value to S_at_upperbound
+                                if S < S_at_upperbound:
+                                    S = S_at_upperbound;
+
+                            elif useEdgeGravity:
+                                # FIXME: Update for multiple fields
+                                # Note that the gravity model represents node edges weights
+                                # with (property1*property2)/(distanceV**2).
+
+                                # Calculate the product of the property weights:
+                                # The inverse distance squared is added with the
+                                # later calculated nodeSpacingNormalizer.
+                                S = values1*values2;
+
+                            elif useLogistic:
+
+                                # Create an array to hold edge weights for each input field
+                                Ss = np.ones(len(values1));
+                                Ss[:] = np.nan;
+
+                                # Iterate over all the data fields stored within nodes
+                                cnt=0
+                                for value1, value2 in zip(values1, values2):
+                                    if np.isnan(value1) | np.isnan(value2):
+                                        # If current node or connecting node do not have a data field value
+                                        # (i.e. don't have a connecting edge).
+                                        cnt+=1
+                                        continue
+                                    else:
+                                        # If current node or connecting node both have a data field value
+                                        # (i.e. have a connecting edge).
+                                        
+                                        # Define current working field
+                                        field = self.Fields["usedFields"][cnt];
+
+                                        # Difference in properties at nodes
+                                        diff = np.abs(value1-value2)
+
+                                        # Use the logistic function to calculated the edge weight component S.
+                                        Ss[cnt] = self.Fields[field]['weightMethodPara']['logisticAttributes']["L"]*(1+np.exp(-self.Fields[field]['weightMethodPara']['logisticAttributes']["k"]*diff+self.Fields[field]['weightMethodPara']['logisticAttributes']["shift"]))**(-1)
+
+                                        # Move data field index
+                                        cnt+=1
+
+                                # Merge field weights, default is mean
+                                if edgeWeightMethod['multiFieldMethod'] == "prod":
+                                    # Take the product of all fields
+                                    S = np.nanprod(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "min":
+                                    # Take the max of all fields
+                                    S = np.nanmin(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "max":
+                                    # Take the min of all fields
+                                    S = np.nanmax(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "mean":
+                                    # Take the mean of all fields
+                                    S = np.nanmean(Ss)
+
+
+                            elif useNormPDFFittedSigmoid:
+                                # FIXME: Update for multiple fields
+                                # Difference in properties at nodes
+                                diff = np.abs(values1-values2)
+                                # Use the pdf fitted sigmoid function
+                                # to calculate the edge weight component S.
+                                S = sigmoid(diff, *self.popt)
+
+                            elif useQTGaussianSigmoid:
+                                # FIXME: Update for multiple fields
+                                # Difference in properties at nodes
+                                diff = np.abs(values1-values2);
+                                # Transform from diff-space to gaussian-space
+                                QTGdiff = qt.transform( np.reshape( np.array(diff), (1,1) ) );
+
+                                # Apply stretch factor after QTGdiff is defined with a Guassian Transformer.
+                                # This will give less weight to tail values of the distribution
+                                QTGdiffStretch = 0.1; # Decimal percentage to stretch the QTGdiff value.
+                                QTGdiff *= (1 + QTGdiffStretch);
+
+                                # Use the logistic function to calculated the edge weight component S.
+                                S = logisticAttributes["L"]*(1+np.exp(-logisticAttributes["k"]*QTGdiff+logisticAttributes["shift"]))**(-1)
+
+                            elif useQTGaussianShiftedGaussianWeightDistribution:
+                                # This method does the following to calculate weights
+                                # 1. Filter outliers from difference data (using IQR method)
+                                # 2. Convert difference data into gaussian (using QT method)
+                                # 3. Calculate z-score of difference data between nodei and nodej
+                                # 4. Given the z-score from step 3) calculate a CDF (0-1) value on a
+                                # new distribution centered at 1 sigma (from the first distribution)
+                                # and with a std of sigma/2 (from the first distribution).
+                                # 4. Define weight as S=(1-CDF) 
+
+
+                                # Create an array to hold edge weights for each input field 
+                                Ss = np.ones(len(values1));
+                                Ss[:] = np.nan;
+
+                                # Iterate over all the data fields stored within nodes
+                                cnt=0
+                                for value1, value2 in zip(values1, values2):
+                                    if np.isnan(value1) | np.isnan(value2):
+                                        # If current node or connecting node do not have a data field value
+                                        # (i.e. don't have a connecting edge).
+                                        cnt+=1
+                                        continue
+                                    else:
+                                        # If current node or connecting node both have a data field value
+                                        # (i.e. have a connecting edge).
+
+                                        # The factor of standard deviations to shorten the CDF distribution by.
+                                        shortenFactor = edgeWeightMethod['shortenFactor']
+                                        # The factor of standard deviations to shift the CDF distribution by.
+                                        shiftFactor = edgeWeightMethod['shiftFactor']
+
+                                        # Difference in properties at nodes
+                                        diff = np.abs(value1-value2);
+                                        # Transform from diff-space to gaussian-space
+                                        QTGdiff = self.Fields[field]['weightMethodPara']['qt'].transform( np.reshape( np.array(diff), (1,1) ) );
+                                        # Get probablity in stretched distribution
+                                        cdfCenter  = self.Fields[field]['weightMethodPara']['qtDissSTD']*shiftFactor
+                                        cdfStretch = self.Fields[field]['weightMethodPara']['qtDissSTD']/shortenFactor
+                                        CDF = stats.norm.cdf(QTGdiff, loc=cdfCenter, scale=cdfStretch)
+                                        # Divide by probablity in normal distribution. This
+                                        # scales probablility between 0-1.
+                                        # Note that:
+                                        #   S->1 for |value1 - value2|-> 0   and
+                                        #   S->0 for |value1 - value2|-> inf
+                                        Ss[cnt] = ( (1-CDF) + edgeWeightMethod['minWeight'] )/(edgeWeightMethod['minWeight']+1);
+
+                                        # Move data field index
+                                        cnt+=1
+
+                                # Merge field weights, default is mean
+                                if edgeWeightMethod['multiFieldMethod'] == "prod":
+                                    # Take the product of all fields
+                                    S = np.nanprod(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "min":
+                                    # Take the max of all fields
+                                    S = np.nanmin(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "max":
+                                    # Take the min of all fields
+                                    S = np.nanmax(Ss)
+                                elif edgeWeightMethod['multiFieldMethod'] == "mean":
+                                    # Take the mean of all fields
+                                    S = np.nanmean(Ss)
+
+                            # Note that this weight contains node spacing information
+                            # (i.e., change in node density with latitude and increased \
+                            # strength in with high latitude... )
+                            coords2 = G.nodes[node2]['pos'];
+                            distanceV = haversine_distance(coords1[0], coords1[1],
+                                                        coords2[0], coords2[1],
+                                                        1);
+                            nodeSpacingNormalizer = distanceV**self.Fields[field]['weightMethodPara']['disPower'];
+                            
+
+                            # Set edge
+                            G.add_edge(node1, node2, bathyAve=S*nodeSpacingNormalizer);
+
+                    # Iterate node counter
+                    node1+=1;
                 
-            # Set some class parameters for testing purposes.
-            self.G = G;
+            
+                # Set some class parameters for testing purposes.
+                self.G = G;
+            
+            else:
+                G = self.G
 
             # Look through all nodes and check for more than 4 connections
             if verbose:
@@ -4410,6 +4990,25 @@ class BasinsEA():
                         tmpValuesPos[i][0],  # lat
                         tmpValuesID[i]       # property
                     ])
+        else: 
+            # Case where dataIrregular represents a list of
+            # values corresponding to positions stored in
+            # tmpValuesPos
+            tmpValuesValues   = cp.deepcopy(dataIrregular)
+            tmpValuesPos  = nx.get_node_attributes(self.G, "pos")
+            dataIrregular = np.zeros((len(tmpValuesPos), 3))
+            if propertyName == "basinID":
+                # basin assignment to tmpValuesID is done
+                # differently due to how it is stored
+                # in nodes.
+                for i in len(tmpValuesValues):
+                    dataIrregular[i, :] = np.array([
+                        tmpValuesPos[i][1],  # lon
+                        tmpValuesPos[i][0],  # lat
+                        tmpValuesID[i]       # Some input values on an irregualar grid
+                    ])
+            print("Add ... ")
+
                 
 
         np.savetxt("temp_points.txt", dataIrregular, fmt="%.8f")
@@ -4430,9 +5029,10 @@ class BasinsEA():
         if mask:
             grid_data = np.where(np.isnan(self.maskValue), np.nan, grid_data)
 
-        self.BasinIDA = grid_data
-
-        #os.system("rm temp_points.txt temp_grid.nc")
+        if propertyName == "basinID":
+            self.BasinIDA = grid_data
+        else:
+            return grid_data
 
     def setEdgeParameter(self,
                          netCDF4Path,
@@ -4809,19 +5409,16 @@ class BasinsEA():
                         # (i.e., change in node density with latitude and increased \
                         # strength in with high latitude... )
                         distanceV = haversine_distance(coords1[0], coords1[1],
-                                                       coords2[0], coords2[1],
-                                                       1);
+                                                    coords2[0], coords2[1],
+                                                    1);
                         nodeSpacingNormalizer = 1/distanceV;
 
                         G.add_edge(node1, node2, bathyAve=bathyAve*nodeSpacingNormalizer);
                         #G.add_edge(node1, node2, bathyAve=bathyAve);
-            
-
-
 
             # Set some class parameters for testing purposes.
             self.G = G;
-
+            
             # Find communities of nodes using the Girvan-Newman algorithm
             self.findCommunities(method = method, minBasinCnt = minBasinCnt);
 
@@ -4931,6 +5528,10 @@ class BasinsEA():
             ensembleSize = detectionMethod['ensembleSize'];
         except:
             ensembleSize = 1;
+        try:
+            constantSeeds = detectionMethod['constantSeeds'];
+        except:
+            constantSeeds = True;
         try:
             njobs = detectionMethod['njobs'];
         except:
@@ -5164,7 +5765,8 @@ class BasinsEA():
                                             distance_threshold=0.3,
                                             n_jobs=1,
                                             partition_strategy=leidenalg.RBConfigurationVertexPartition,
-                                            method="leiden"):
+                                            method="leiden",
+                                            constantSeeds=True):
             """
             Parallel consensus clustering supporting Leiden or Louvain.
 
@@ -5202,7 +5804,17 @@ class BasinsEA():
 
             coassoc_base = multiprocessing.Array(ctypes.c_double, n * n, lock=True)
 
-            seeds = list(range(runs))
+            if constantSeeds:
+                seeds = list(range(runs))
+            else:
+                import random
+                seeds = [];
+                for _ in range(runs):
+                    seeds.append(random.randint(0, 1e6))
+
+            # For testing if seeds are constant or variable across runs.
+            # print("\nseeds: {}\n".format(seeds))
+            
             with multiprocessing.Pool(
                 processes=n_jobs,
                 initializer=_CReduction_init_worker,
@@ -5241,9 +5853,149 @@ class BasinsEA():
                     "n_jobs": n_jobs,
                     "partition_strategy": str(partition_strategy)
                 }
-            )
+            ), coassoc
 
+        import numpy as np
+        from collections import defaultdict
 
+        def node_certainty_metrics(coassoc: np.ndarray, labels: np.ndarray, eps: float = 1e-9):
+            """
+            node_certainty_metrics method compute per-node certainty
+            metrics from a co-association matrix and final labels.
+            
+            
+            Returns :
+            --------
+            Dictionary
+                'in_cohesion'
+                'best_other'
+                'margin'
+                'silhouette'
+                'assign_prob'
+                'entropy'
+                'core_score'
+            """
+            n = coassoc.shape[0]
+            # Ensure diagonal = 1 (sometimes pooling can leave slight drift)
+            coassoc = coassoc.copy()
+            np.fill_diagonal(coassoc, 1.0)
+
+            # Build communities (index lists)
+            comm_to_idx = defaultdict(list);    # Dictionary of list
+            for i, c in enumerate(labels):
+                comm_to_idx[c].append(i)        # For community c append node index i
+            comm_ids = list(comm_to_idx.keys()) # Get all community indices e.g., [0,1,2,...,99] for 100 communities.
+            comm_lists = [np.array(comm_to_idx[c], dtype=int) for c in comm_ids]
+            comm_of = {i: ci for ci, nodes in enumerate(comm_lists) for i in nodes}  # map node -> community index (0..k-1)
+
+            k = len(comm_lists)
+            # Precompute per-node per-community mean coassoc (including self, we will exclude later)
+            # To avoid self-bias, we will subtract i when in its own community.
+            mean_to_comm = np.zeros((n, k), dtype=float)
+
+            for ci, members in enumerate(comm_lists):
+                # For each node i, mean coassoc to members of community ci
+                # coassoc[:, members] -> n x |members|; take mean across axis=1
+                denom = len(members)
+                if denom > 0:
+                    mean_to_comm[:, ci] = coassoc[:, members].mean(axis=1)
+                else:
+                    mean_to_comm[:, ci] = 0.0
+
+            # Now correct self-bias for a node's own community:
+            # Replace mean with leave-one-out mean when computing own-community stats
+            loo_mean_to_own = np.zeros(n, dtype=float)
+            for i in range(n):
+                ci = comm_of[i]
+                members = comm_lists[ci]
+                size = len(members)
+                if size <= 1:
+                    loo_mean_to_own[i] = 0.0
+                else:
+                    # (sum over members - self) / (size-1)
+                    s = coassoc[i, members].sum() - 1.0
+                    loo_mean_to_own[i] = s / (size - 1)
+
+            # In-cluster cohesion (using leave-one-out)
+            in_cohesion = loo_mean_to_own.copy()
+
+            # Best-other overlap
+            best_other = np.zeros(n, dtype=float)
+            for i in range(n):
+                ci = comm_of[i]
+                # candidates are all communities except ci
+                if k == 1:
+                    best_other[i] = 0.0
+                else:
+                    # We used group means that included self if self is in that community; for other communities this is fine
+                    others = [c for c in range(k) if c != ci]
+                    # If some other community is a singleton with the node itself (can't happen), just safe-guard
+                    best_other[i] = mean_to_comm[i, others].max() if others else 0.0
+
+            margin = in_cohesion - best_other
+
+            # Silhouette-like score using distances = 1 - coassoc
+            silhouette = np.zeros(n, dtype=float)
+            for i in range(n):
+                ci = comm_of[i];        # Community index of node being evaluated
+                own = comm_lists[ci];   # Numpy list of nodes in community ci
+                size = len(own);        # Number of nodes in community ci
+                if size <= 1:
+                    # Case where node is the only node in the community
+                    silhouette[i] = 0.0
+                    continue
+                
+                # mean distance to own cluster (leave-one-out)
+                # sum of coassociation between between node i and every other node in community ci: (coassoc[i, own].sum() - 1.0)
+                # distance between node i and each node in community ci:            1.0 - (coassoc[i, own].sum() - 1)
+                # average distance between node i and each node in community ci:    a
+                a = (1.0 - (coassoc[i, own].sum() - 1.0) / (size - 1))  
+
+                # mean distance to other clusters
+                b = np.inf
+                for cj, members in enumerate(comm_lists):
+                    if cj == ci or len(members) == 0:
+                        # if current evaluated community contains the current evaluated node
+                        continue
+                    # find determine closest (smallest distance) node outside of community ci. 
+                    b = min(b, (1.0 - coassoc[i, members].mean()))
+                if not np.isfinite(b):
+                    silhouette[i] = 0.0
+                else:
+                    # Calculate silhouette value
+                    denom = max(a, b)
+                    silhouette[i] = (b - a) / denom if denom > eps else 0.0
+
+            # Soft assignment probabilities p_i(C)
+            # Use small epsilon to avoid zeros (helps entropy)
+            soft = mean_to_comm + eps
+            soft /= soft.sum(axis=1, keepdims=True)
+            assign_prob = soft.max(axis=1)
+            # Entropy in nats; convert to bits by / np.log(2) if desired
+            entropy = -(soft * np.log(soft)).sum(axis=1)
+
+            # Core score (higher means node is well-supported within its own community)
+            core_score = np.zeros(n, dtype=float)
+            for i in range(n):
+                ci = comm_of[i]
+                members = comm_lists[ci]
+                if len(members) == 0:
+                    core_score[i] = 0.0
+                    continue
+                numer = coassoc[i, members].sum()
+                denom = np.sqrt(len(members)) * max(coassoc[i, members].max(), eps)
+                core_score[i] = numer / denom
+
+            return {
+                "in_cohesion": in_cohesion,
+                "best_other": best_other,
+                "margin": margin,
+                "silhouette": silhouette,
+                "assign_prob": assign_prob,
+                "entropy": entropy,
+                "core_score": core_score,
+            }
+        
         ###################################################
         ### Community and Composite Community Detection ###
         ###################################################
@@ -5251,7 +6003,6 @@ class BasinsEA():
             ################################################
             ### Girvan-Newman community detection method ###
             ################################################
-
             # GIRVAN-NEWMAN COMMUNITY DETECTION
             self.communities = list(nx.community.girvan_newman(self.G, most_valuable_edge=mostCentralEdge));
 
@@ -5268,33 +6019,85 @@ class BasinsEA():
 
         elif (method=="Leiden") | (method=="Leiden-Girvan-Newman"):
             # LEDIAN COMMUNITY DETECTION
-            Rcommunities = consensus_reduction_parallel_shared(self.G,
-                                             resolution_parameter=detectionMethod['resolution'],
-                                             distance_threshold=0.3,
-                                             runs=ensembleSize,
-                                             n_jobs=njobs,
-                                             partition_strategy=OpStrat,
-                                             method="leiden")
+            Rcommunities, coassocDiagonal = consensus_reduction_parallel_shared(self.G,
+                                                                                resolution_parameter=detectionMethod['resolution'],
+                                                                                distance_threshold=0.3,
+                                                                                runs=ensembleSize,
+                                                                                n_jobs=njobs,
+                                                                                partition_strategy=OpStrat,
+                                                                                method="leiden",
+                                                                                constantSeeds=constantSeeds)
 
+            # Set ensemble community uncertainty metrics
+            # Convert communities to a label vector aligned with the sorted node list
+            nodes_sorted = sorted(Rcommunities.graph.nodes())
+            node_to_idx = {node:i for i, node in enumerate(nodes_sorted)}
+
+            labels = np.full(len(nodes_sorted), -1, dtype=int)
+            for cid, comm in enumerate(Rcommunities.communities):
+                # cid  : community index
+                # comm : list of nodes in community index cid 
+                for node in comm:
+                    labels[node_to_idx[node]] = cid
+
+            metrics = node_certainty_metrics(coassocDiagonal, labels)
+
+            # Example: attach per-node certainty back to node attributes
+            for node, i in node_to_idx.items():
+                self.G.nodes[node]["consensus_incohesion"] = float(metrics["in_cohesion"][i])
+                self.G.nodes[node]["consensus_margin"]      = float(metrics["margin"][i])
+                self.G.nodes[node]["consensus_silhouette"]  = float(metrics["silhouette"][i])
+                self.G.nodes[node]["consensus_prob"]        = float(metrics["assign_prob"][i])
+                self.G.nodes[node]["consensus_entropy"]     = float(metrics["entropy"][i])
+                self.G.nodes[node]["consensus_core"]        = float(metrics["core_score"][i])
+
+            # Set community structure to class attributes.
             Rcommunities                = Rcommunities.communities;
             self.Rcommunities           = cp.deepcopy(Rcommunities)
             self.RcommunitiesUnaltered  = cp.deepcopy(Rcommunities);
             self.communitiesFinal       = self.Rcommunities;
+            self.coassocDiagonal        = coassocDiagonal;
 
         elif  (method=="Louvain") | (method=="Louvain-Girvan-Newman"):
             # LOUVAIN COMMUNITY DETECTION
-            Rcommunities = consensus_reduction_parallel_shared(self.G,
-                                                            resolution_parameter=detectionMethod['resolution'],
-                                                            distance_threshold=0.3,
-                                                            runs=ensembleSize,
-                                                            n_jobs=njobs,
-                                                            partition_strategy=OpStrat,
-                                                            method="louvain")
+            Rcommunities, coassocDiagonal = consensus_reduction_parallel_shared(self.G,
+                                                                                resolution_parameter=detectionMethod['resolution'],
+                                                                                distance_threshold=0.3,
+                                                                                runs=ensembleSize,
+                                                                                n_jobs=njobs,
+                                                                                partition_strategy=OpStrat,
+                                                                                method="louvain",
+                                                                                constantSeeds=constantSeeds)
+            
+            # Set ensemble community uncertainty metrics
+            # Convert communities to a label vector aligned with the sorted node list
+            nodes_sorted = sorted(Rcommunities.graph.nodes())
+            node_to_idx = {node:i for i, node in enumerate(nodes_sorted)}
 
+            labels = np.full(len(nodes_sorted), -1, dtype=int)
+            for cid, comm in enumerate(Rcommunities.communities):
+                # cid  : community index
+                # comm : list of nodes in community index cid 
+                for node in comm:
+                    labels[node_to_idx[node]] = cid
+
+            metrics = node_certainty_metrics(coassocDiagonal, labels)
+
+            # Example: attach per-node certainty back to node attributes
+            for node, i in node_to_idx.items():
+                self.G.nodes[node]["consensus_incohesion"] = float(metrics["in_cohesion"][i])
+                self.G.nodes[node]["consensus_margin"]      = float(metrics["margin"][i])
+                self.G.nodes[node]["consensus_silhouette"]  = float(metrics["silhouette"][i])
+                self.G.nodes[node]["consensus_prob"]        = float(metrics["assign_prob"][i])
+                self.G.nodes[node]["consensus_entropy"]     = float(metrics["entropy"][i])
+                self.G.nodes[node]["consensus_core"]        = float(metrics["core_score"][i])
+
+            # Set community structure to class attributes.
             Rcommunities                = Rcommunities.communities;
             self.Rcommunities           = cp.deepcopy(Rcommunities)
             self.RcommunitiesUnaltered  = cp.deepcopy(Rcommunities);
             self.communitiesFinal       = self.Rcommunities;
+            self.coassocDiagonal        = coassocDiagonal;
 
         else:
             # Throw Error
@@ -5842,6 +6645,7 @@ class BasinsEA():
         self.G's basinID node attribute.
         """
 
+        print("self.AOC", self.AOC)
 
         ##########################
         ### Merge basins Model ###
@@ -5850,7 +6654,7 @@ class BasinsEA():
         if thresholdMethod == '%':
             # Set methodScalar to AOC (total ocean surface) since we are
             # comparing with surface area in %.
-            methodScalar = self.AOC/100;
+            methodScalar = self.AOCMask/100;
         elif thresholdMethod == 'm2':
             # Set methodScalar to 1 since we are comparing with surface
             # area in meters.
@@ -5861,8 +6665,8 @@ class BasinsEA():
         distance = 1e20;
 
         # Get basin properties from nodes
-        nodesID = nx.get_node_attributes(self.G, "basinID");          # Dictionary of nodes and their basinID
-        nodePos = nx.get_node_attributes(self.G, "pos");            # Dictionary of nodes and their positions (lat,lon) [deg, deg]
+        nodesID   = nx.get_node_attributes(self.G, "basinID");      # Dictionary of nodes and their basinID
+        nodePos   = nx.get_node_attributes(self.G, "pos");          # Dictionary of nodes and their positions (lat,lon) [deg, deg]
         nodesAWm2 = nx.get_node_attributes(self.G,'areaWeightm2');  # Dictionary of nodes and their area [m2]
 
 
@@ -6128,9 +6932,9 @@ class BasinsEA():
                         thresholdMethod= mergerPackage['mergeSmallBasins']['thresholdMethod'],
                         mergeMethod    = mergerPackage['mergeSmallBasins']['mergeMethod'],
                         write=True);
-                    # Since graph is modified (not array), we must interpolate the grid
-                    # from irregular to regular grid after each merger.
-                    self.BasinIDA = self.interp2regularGrid(mask=True)
+                # Since graph is modified (not array), we must interpolate the grid
+                # from irregular to regular grid after each merger.
+                self.BasinIDA = self.interp2regularGrid(mask=True)
         except:
             pass;
 
@@ -7414,8 +8218,6 @@ class Basins():
                         G.add_edge(node1, node2, bathyAve=bathyAve*hexsidelengnth);
             
 
-
-
             # Set some class parameters for testing purposes.
             self.G = G;
 
@@ -8329,7 +9131,7 @@ class Basins():
         distance = 1e20;
 
         # Get basin properties from nodes
-        nodesID = nx.get_node_attributes(self.G, "basinID");          # Dictionary of nodes and their basinID
+        nodesID = nx.get_node_attributes(self.G, "basinID");        # Dictionary of nodes and their basinID
         nodePos = nx.get_node_attributes(self.G, "pos");            # Dictionary of nodes and their positions (lat,lon) [deg, deg]
         nodesAWm2 = nx.get_node_attributes(self.G,'areaWeightm2');  # Dictionary of nodes and their area [m2]
 
@@ -8352,7 +9154,7 @@ class Basins():
         LatCentroid = np.zeros(len(nodeBasinIDUnique));             # Array to hold basini centroid latitude [deg]
         LonCentroid = np.zeros(len(nodeBasinIDUnique));             # Array to hold basini centroid longitude [deg]
         for i, basinID, nodePosi in zip(nodesAWm2, nodeBasinID, nodePosA):
-            basinArea[int(basinID)] += nodesAWm2[i];                # Add node i to basinID basinArea area sum [m2].
+            basinArea[int(basinID)]   += nodesAWm2[i];              # Add node i to basinID basinArea area sum [m2].
             LatCentroid[int(basinID)] += nodePosi[0]*nodesAWm2[i]   # Add node i to basinID (basinArea area)*(latitude) sum [deg*m2].
             LonCentroid[int(basinID)] += np.deg2rad(nodePosi[1])*nodesAWm2[i]   # Add node i to basinID (basinArea area)*(longitude) sum [rad*m2]. Note that this radian conversion only works for data on [-180,180], not [0,360]
 
@@ -10133,12 +10935,59 @@ def mergerPackages(package = '', verbose=True):
     if package == 'Lite':
         # Package only merges to have basins larger than 0.5% total surface of oceans
         mergerPackage = {'mergeSmallBasins': {'on':True,
-                                              'threshold':np.array([.1,.5]),
+                                              'threshold':np.array([.1, .5]),
                                               'thresholdMethod':'%',
                                               'mergeMethod':'nearBasinEdge'},
                         'verbose':True};
         pass
-
+    elif package == 'Lite1':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1, .5, 1]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+    elif package == 'Lite2':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.05]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+    elif package == 'Lite3':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.1]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+    elif package == 'Lite4':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.03]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+    elif package == 'LiteShelf0,3degree':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([0.03, .15]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
+    elif package == 'Test':
+        # Package only merges to have basins larger than 0.5% total surface of oceans
+        mergerPackage = {'mergeSmallBasins': {'on':True,
+                                              'threshold':np.array([.15]),
+                                              'thresholdMethod':'%',
+                                              'mergeMethod':'nearBasinEdge'},
+                        'verbose':True};
+        pass
     elif package == 'None':
         # Package only merges to have basins larger than 0.5% total surface of oceans
         mergerPackage = {'mergeSmallBasins': {'on':True,
@@ -10184,6 +11033,263 @@ def mergerPackages(package = '', verbose=True):
 #######################################################################
 ################ Process Global Ocean Physics Reanalysis ##############
 #######################################################################
+class GLORYS12V1_QT():
+    '''
+    The GLORYS12V1 class is used to download GLORYS12V1
+    data and format it to be used with the ExoCcycle model.
+
+    '''
+
+    def __init__(self, options = {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1", "year":[1994], "data": "bottomT", "depthAve":[0,100]}):
+        """
+        Initialization of GLORYS12V1
+        
+        
+        Parameters
+        -----------
+        options : DICTIONARY
+            download : BOOLEAN
+            dataDir : STRING
+            year : LIST
+            data : STRING
+                Data to be averaged
+                    'bottomT' : sea_water_potential_temperature_at_sea_floor
+                    'thetao' : sea_water_potential_temperature [depth dimension]
+                    'so' : sea_water_salinity [depth dimension]
+            depthAve : LIST
+                2 element list, describing the range over which an output
+                value should be averaged. Note that averaging is only used
+                if the input variable has a depth dimension.
+            The default is {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1",
+            "year":[1994], "data": "thetao", "depthAve":[0,100]}.
+        """
+
+        # Assign options to object
+        self.options = options;
+
+        # Assign general name of netCDF file
+        self.options["netCDFGeneral"] = "mercatorglorys12v1_gl12_mean_YEARMONTH.nc";
+    
+        # Define initial attributes
+        self.areaWeightsA = None;
+
+
+
+    def download(self):
+        """
+        download method is used to download the GLORYS12V1
+        data (netCDFs) and store them in a data directory
+        accessed by the ExoCcycle library.
+        """
+        FIXME
+
+
+    def averageModels(self):
+        """
+        averageModels is used to make an averaged netCDF model
+        given all netCDFs stored in the data directory.  
+        """
+
+        # Create list of netCDFs to average
+        self.ListOfNetCDFs = [];
+        for i in range(len(self.options['year'])):
+            for month in range(12):
+                readFile = self.options["netCDFGeneral"].replace("YEAR", str(self.options['year'][i])).replace("MONTH", "{}".format(month+1).zfill(2))
+                self.ListOfNetCDFs.append(readFile)
+        
+        # Iterate through all netCDF4 files, copying only the used variables
+        self.ListOfSimpNetCDFs = [];
+        for i in range(len(self.ListOfNetCDFs)):
+            self.simplifyNetCDF(
+                inputPath=self.options["dataDir"]+"/"+self.ListOfNetCDFs[i],
+                outputPath=self.options["dataDir"]+"/file{}.nc".format(i),
+                variableList=['longitude', 'latitude', self.options['data']]
+            )
+            self.ListOfSimpNetCDFs.append(self.options["dataDir"]+"/file{}.nc".format(i))
+
+        # Create a gmt command and use to gmt to average all netCDF4s.
+        ## Create list of files to add
+        SimpNetCDFs = " ".join(self.ListOfSimpNetCDFs)
+        ## Create list of adds
+        adds=[];
+        for i in range(len(self.ListOfSimpNetCDFs)-1):
+            adds.append("ADD")
+        adds = " ".join(adds);
+        ## Define the command
+        outputFileName = "{0}_average_{1}_{2}m_QTAveraged.nc".format(self.options["dataDir"]+"/"+self.options['data'], self.options['depthAve'][0], self.options['depthAve'][1])
+        GMTcommand = "gmt grdmath {0} {1} {2} DIV = {3}".format(SimpNetCDFs, adds, len(self.ListOfSimpNetCDFs), outputFileName)
+        ## Use the command
+        os.system(GMTcommand)
+        ## Apply a mask to the averaged grid (FIXME: No longer need)
+        #os.system("gmt grdmath {0} {1} OR = {1}".format(self.options["dataDir"]+"/"+self.ListOfSimpNetCDFs[0], outputFileName)
+        
+    def makeAreaWeightGrid(self, step, latRange, lonRange):
+        areaWeightsA, longitudes, latitudes, totalArea, totalAreaCalculated = areaWeights(resolution = step,
+                                                                                          radius = 1,
+                                                                                          LonStEd = [lonRange[0]-step/2,lonRange[1]+step/2],
+                                                                                          LatStEd = [latRange[0]-step/2,latRange[1]+step/2])
+        self.areaWeights = areaWeightsA
+        self.longitudes = longitudes
+        self.latitudes = latitudes
+        self.totalArea = totalArea
+        self.totalAreaCalculated = totalAreaCalculated
+
+    def simplifyNetCDF(self, inputPath="path/file.nc", outputPath="~/file2.nc",
+    variableList=['longitude', 'latitude', 'variable']):
+        """
+        simplifyNetCDF method reads a NetCDF4 file and writes a new NetCDF4 file
+        with only lat, lon, and 'variable' variables.
+
+        Parameters
+        -----------
+        input_path : STRING
+            Path to the input NetCDF4 file.
+        output_path : STRING
+            Path to save the new NetCDF4 file.
+        variableList : LIST OF STRINGS
+            3 length list of strings that correspond to an
+            x (longitude), y (latitude), and z (e.g., bathymetry)
+            variable. The default is ['latitude', 'logitude',
+            'variable'].
+        """
+        from sklearn.preprocessing import QuantileTransformer
+        
+        # Expand the user path (~) to an absolute path
+        outputPath = os.path.expanduser(outputPath)
+
+        # Open the original NetCDF file (file1.nc) in read mode
+        with Dataset(inputPath, 'r') as src:
+            # Define area weights if not already defined
+            if self.areaWeightsA is None:
+                # Defines: self.areaWeights, self.longitudes, self.latitudes, self.totalArea, self.totalAreaCalculated
+                self.makeAreaWeightGrid(step      = src['latitude'].step,
+                                        latRange  = [src['latitude'].valid_min, src['latitude'].valid_max],
+                                        lonRange  = [src['longitude'].valid_min, src['longitude'].valid_max])
+
+            # Create a new NetCDF file (file2.nc) in write mode
+            with Dataset(outputPath, 'w', format="NETCDF4_CLASSIC") as dst:
+                # Copy global attributes
+                if "title" in src.ncattrs():
+                    dst.title = src.title  # Preserve title attribute
+
+                # Copy lat & lon dimensions
+                for dim_name in [variableList[0], variableList[1]]:
+                    if dim_name in src.dimensions:
+                        dst.createDimension(dim_name, len(src.dimensions[dim_name]))
+
+                # Copy lat & lon variables
+                # for var_name in [variableList[0], variableList[1]]:
+                #     if var_name in src.variables:
+                #         var = src.variables[var_name]
+                #         dst_var = dst.createVariable(var_name, np.float32, var.dimensions)
+                #         dst_var[:] = var[:]  # Copy data
+                #         # Copy attributes
+                #         for attr in var.ncattrs():
+                #             try:
+                #                 dst_var.setncatts({attr: var.getncattr(attr)})
+                #             except:
+                #                 pass
+                if variableList[0] in src.variables:
+                    lat = src.variables[variableList[0]]
+                    lat_dst_var = dst.createVariable(variableList[0], np.float32, lat.dimensions)
+                    lat_dst_var[:] = lat[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lat.ncattrs():
+                    #     try:
+                    #         lat_dst_var.setncatts({attr: lat.getncattr(attr)})
+                    #     except:
+                    #         pass
+                if variableList[1] in src.variables:
+                    lon = src.variables[variableList[1]]
+                    lon_dst_var = dst.createVariable(variableList[1], np.float32, lon.dimensions)
+                    lon_dst_var[:] = lon[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lon.ncattrs():
+                    #     try:
+                    #         lon_dst_var.setncatts({attr: lon.getncattr(attr)})
+                    #     except:
+                    #         pass
+
+
+                # Copy variable and rename it to 'z'
+                if variableList[2] in src.variables:
+                    z_var = src.variables[variableList[2]]
+                    dst_z = dst.createVariable("z", np.float32, (z_var.dimensions[-2],z_var.dimensions[-1]))
+                    if len(z_var.dimensions) == 3:
+                        # Copy data
+                        dst_z[:] = z_var[:]
+                    else:
+                        # Define depth variable and logical defining
+                        # depth range to average over
+                        depth = src.variables['depth'][:];
+                        layerThickness = np.diff( np.append(0, depth) )
+                        depthLogical = (depth>self.options['depthAve'][0])&(depth<self.options['depthAve'][1])
+
+                        # Define array to hold sum of layered values
+                        # (Assumes top/first layer contains all possible values as non-nan)
+                        LayerIdx = np.argwhere(depthLogical.data).T
+                        if np.size(LayerIdx) > 1:
+                            LayerIdx = LayerIdx[0]
+                            topLayerIdx = np.argwhere(depthLogical.data)[0][0];
+                        else:
+                            topLayerIdx = np.argwhere(depthLogical.data)[0];
+                        sum = z_var[:][0][topLayerIdx].data*0
+                        intervals = z_var[:][0][topLayerIdx].data*0
+                        layerThickness = layerThickness[depthLogical]
+                        dataLayers = z_var[:][0][depthLogical]
+
+                        # Loop over depth intervals
+                        for i in range(len(layerThickness)):
+                            # Assign working layer
+                            dataLayer = dataLayers[i]
+                            # print(dataLayer)
+                            # print(dataLayer.data)
+                            # print(dataLayer.mask)
+                            # print( np.reshape(dataLayer.data[~dataLayer.mask], (np.size(dataLayer.data[~dataLayer.mask]), 1)) )
+                            # print("i, layerThickness", i, layerThickness)
+
+                            # Check if field is empty. This might be the case for the deepest layer
+                            if np.size(dataLayer.data[~dataLayer.mask]) == 0:
+                                continue
+
+                            # Apply an area weighted quantile transformation to layer
+                            qt = QuantileTransformer(n_quantiles=1000,
+                                                     random_state=0,
+                                                     output_distribution='normal')
+
+                            qt.fit_transform( np.reshape(dataLayer.data[~dataLayer.mask], (np.size(dataLayer.data[~dataLayer.mask]), 1)) )    
+                            dataLayerTransformed = qt.transform(np.reshape( dataLayer.data, (np.size(dataLayer.data),1) ) )
+                            dataLayerTransformed = np.reshape( dataLayerTransformed, np.shape(dataLayer.data) )
+
+                            # Add quantile transformed data to running sum
+                            sum[~dataLayer.mask]       += dataLayerTransformed[ ~dataLayer.mask ]*layerThickness[i];
+                            intervals[~dataLayer.mask] += layerThickness[i]
+
+                        # Copy top layer and replace .data with averaged values 
+                        # average = cp.deepcopy( z_var[:][0][topLayerIdx] )
+                        # average.data[:] = (sum/intervals)
+                        # dst_z[:] = average.data
+                        dst_z[:] = sum/intervals
+
+                    # Copy attributes
+                    # for attr in z_var.ncattrs():
+                    #     if attr != "_FillValue":
+                    #         try:
+                    #             #print("attr",attr)
+                    #             dst_z.setncatts({attr: z_var.getncattr(attr)})
+                    #         except:
+                    #             pass
+
+
+    def readnetCDF(self, year, month):
+        # Define the file name for year and month
+        
+        readFile = self.options["dataDir"]+"/"+self.options["netCDFGeneral"].replace("YEAR", str(year)).replace("MONTH", "{}".format(month).zfill(2))
+
+        # Read the netCDF file
+        return Dataset(readFile, "r");
+
+
 
 class GLORYS12V1():
     '''
@@ -10308,19 +11414,40 @@ class GLORYS12V1():
                         dst.createDimension(dim_name, len(src.dimensions[dim_name]))
 
                 # Copy lat & lon variables
-                for var_name in [variableList[0], variableList[1]]:
-                    if var_name in src.variables:
-                        var = src.variables[var_name]
-                        dst_var = dst.createVariable(var_name, np.float32, var.dimensions)
-                        dst_var[:] = var[:]  # Copy data
-                        # Copy attributes
-                        for attr in var.ncattrs():
-                            try:
-                                dst_var.setncatts({attr: var.getncattr(attr)})
-                            except:
-                                pass
+                # for var_name in [variableList[0], variableList[1]]:
+                #     if var_name in src.variables:
+                #         var = src.variables[var_name]
+                #         dst_var = dst.createVariable(var_name, np.float32, var.dimensions)
+                #         dst_var[:] = var[:]  # Copy data
+                #         # Copy attributes
+                #         for attr in var.ncattrs():
+                #             try:
+                #                 dst_var.setncatts({attr: var.getncattr(attr)})
+                #             except:
+                #                 pass
+                if variableList[0] in src.variables:
+                    lat = src.variables[variableList[0]]
+                    lat_dst_var = dst.createVariable(variableList[0], np.float32, lat.dimensions)
+                    lat_dst_var[:] = lat[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lat.ncattrs():
+                    #     try:
+                    #         lat_dst_var.setncatts({attr: lat.getncattr(attr)})
+                    #     except:
+                    #         pass
+                if variableList[1] in src.variables:
+                    lon = src.variables[variableList[1]]
+                    lon_dst_var = dst.createVariable(variableList[1], np.float32, lon.dimensions)
+                    lon_dst_var[:] = lon[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lon.ncattrs():
+                    #     try:
+                    #         lon_dst_var.setncatts({attr: lon.getncattr(attr)})
+                    #     except:
+                    #         pass
 
-                # Copy bathymetry variable and rename it to 'z'
+
+                # Copy variable and rename it to 'z'
                 if variableList[2] in src.variables:
                     z_var = src.variables[variableList[2]]
                     dst_z = dst.createVariable("z", np.float32, (z_var.dimensions[-2],z_var.dimensions[-1]))
@@ -10333,19 +11460,238 @@ class GLORYS12V1():
                         depth = src.variables['depth'][:];
                         layerThickness = np.diff( np.append(0, depth) )
                         depthLogical = (depth>self.options['depthAve'][0])&(depth<self.options['depthAve'][1])
+
+                        # Define array to hold sum of layered values
+                        # (Assumes top/first layer contains all possible values as non-nan)
+                        LayerIdx = np.argwhere(depthLogical.data).T
+                        if np.size(LayerIdx) > 1:
+                            LayerIdx = LayerIdx[0]
+                            topLayerIdx = np.argwhere(depthLogical.data)[0][0];
+                        else:
+                            topLayerIdx = np.argwhere(depthLogical.data)[0];
+                        sum = z_var[:][0][topLayerIdx].data*0
+                        intervals = z_var[:][0][topLayerIdx].data*0
+                        layerThickness = layerThickness[depthLogical]
+                        dataLayers = z_var[:][0][depthLogical]
+
+                        # Loop over depth intervals
+                        for i in range(len(layerThickness)):
+                            sum[~dataLayers[i].mask]       += dataLayers[i].data[ ~dataLayers[i].mask ]*layerThickness[i];
+                            intervals[~dataLayers[i].mask] += layerThickness[i]
+
+                        # Copy top layer and replace .data with averaged values 
+                        # average = cp.deepcopy( z_var[:][0][topLayerIdx] )
+                        # average.data[:] = (sum/intervals)
+                        # dst_z[:] = average.data
+                        dst_z[:] = sum/intervals
+
+                    # Copy attributes
+                    # for attr in z_var.ncattrs():
+                    #     if attr != "_FillValue":
+                    #         try:
+                    #             #print("attr",attr)
+                    #             dst_z.setncatts({attr: z_var.getncattr(attr)})
+                    #         except:
+                    #             pass
+
+
+    def readnetCDF(self, year, month):
+        # Define the file name for year and month
+        
+        readFile = self.options["dataDir"]+"/"+self.options["netCDFGeneral"].replace("YEAR", str(year)).replace("MONTH", "{}".format(month).zfill(2))
+
+        # Read the netCDF file
+        return Dataset(readFile, "r");
+
+
+class GLORYS12V1_old():
+    '''
+    The GLORYS12V1 class is used to download GLORYS12V1
+    data and format it to be used with the ExoCcycle model.
+
+    '''
+
+    def __init__(self, options = {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1", "year":[1994], "data": "bottomT", "depthAve":[0,100]}):
+        """
+        Initialization of GLORYS12V1
+        
+        
+        Parameters
+        -----------
+        options : DICTIONARY
+            download : BOOLEAN
+            dataDir : STRING
+            year : LIST
+            data : STRING
+                Data to be averaged
+                    'bottomT' : sea_water_potential_temperature_at_sea_floor
+                    'thetao' : sea_water_potential_temperature [depth dimension]
+                    'so' : sea_water_salinity [depth dimension]
+            depthAve : LIST
+                2 element list, describing the range over which an output
+                value should be averaged. Note that averaging is only used
+                if the input variable has a depth dimension.
+            The default is {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1",
+            "year":[1994], "data": "thetao", "depthAve":[0,100]}.
+        """
+
+        # Assign options to object
+        self.options = options;
+
+        # Assign general name of netCDF file
+        self.options["netCDFGeneral"] = "mercatorglorys12v1_gl12_mean_YEARMONTH.nc";
+
+
+
+    def download(self):
+        """
+        download method is used to download the GLORYS12V1
+        data (netCDFs) and store them in a data directory
+        accessed by the ExoCcycle library.
+        """
+        FIXME
+
+
+    def averageModels(self):
+        """
+        averageModels is used to make an averaged netCDF model
+        given all netCDFs stored in the data directory.  
+        """
+
+        # Create list of netCDFs to average
+        self.ListOfNetCDFs = [];
+        for i in range(len(self.options['year'])):
+            for month in range(12):
+                readFile = self.options["netCDFGeneral"].replace("YEAR", str(self.options['year'][i])).replace("MONTH", "{}".format(month+1).zfill(2))
+                self.ListOfNetCDFs.append(readFile)
+        
+        # Iterate through all netCDF4 files, copying only the used variables
+        self.ListOfSimpNetCDFs = [];
+        for i in range(len(self.ListOfNetCDFs)):
+            self.simplifyNetCDF(
+                inputPath=self.options["dataDir"]+"/"+self.ListOfNetCDFs[i],
+                outputPath=self.options["dataDir"]+"/file{}.nc".format(i),
+                variableList=['longitude', 'latitude', self.options['data']]
+            )
+            self.ListOfSimpNetCDFs.append(self.options["dataDir"]+"/file{}.nc".format(i))
+
+        # Create a gmt command and use to gmt to average all netCDF4s.
+        ## Create list of files to add
+        SimpNetCDFs = " ".join(self.ListOfSimpNetCDFs)
+        ## Create list of adds
+        adds=[];
+        for i in range(len(self.ListOfSimpNetCDFs)-1):
+            adds.append("ADD")
+        adds = " ".join(adds);
+        ## Define the command
+        outputFileName = "{0}_average_{1}_{2}m.nc".format(self.options["dataDir"]+"/"+self.options['data'], self.options['depthAve'][0], self.options['depthAve'][1])
+        GMTcommand = "gmt grdmath {0} {1} {2} DIV = {3}".format(SimpNetCDFs, adds, len(self.ListOfSimpNetCDFs), outputFileName)
+        ## Use the command
+        os.system(GMTcommand)
+        ## Apply a mask to the averaged grid (FIXME: No longer need)
+        #os.system("gmt grdmath {0} {1} OR = {1}".format(self.options["dataDir"]+"/"+self.ListOfSimpNetCDFs[0], outputFileName)
+        
+
+    def simplifyNetCDF(self, inputPath="path/file.nc", outputPath="~/file2.nc",
+    variableList=['longitude', 'latitude', 'variable']):
+        """
+        simplifyNetCDF method reads a NetCDF4 file and writes a new NetCDF4 file
+        with only lat, lon, and 'variable' variables.
+
+        Parameters
+        -----------
+        input_path : STRING
+            Path to the input NetCDF4 file.
+        output_path : STRING
+            Path to save the new NetCDF4 file.
+        variableList : LIST OF STRINGS
+            3 length list of strings that correspond to an
+            x (longitude), y (latitude), and z (e.g., bathymetry)
+            variable. The default is ['latitude', 'logitude',
+            'variable'].
+        """
+        # Expand the user path (~) to an absolute path
+        outputPath = os.path.expanduser(outputPath)
+
+        # Open the original NetCDF file (file1.nc) in read mode
+        with Dataset(inputPath, 'r') as src:
+            # Create a new NetCDF file (file2.nc) in write mode
+            with Dataset(outputPath, 'w', format="NETCDF4_CLASSIC") as dst:
+                # Copy global attributes
+                if "title" in src.ncattrs():
+                    dst.title = src.title  # Preserve title attribute
+
+                # Copy lat & lon dimensions
+                for dim_name in [variableList[0], variableList[1]]:
+                    if dim_name in src.dimensions:
+                        dst.createDimension(dim_name, len(src.dimensions[dim_name]))
+
+                # Copy lat & lon variables
+                # for var_name in [variableList[0], variableList[1]]:
+                #     if var_name in src.variables:
+                #         var = src.variables[var_name]
+                #         dst_var = dst.createVariable(var_name, np.float32, var.dimensions)
+                #         dst_var[:] = var[:]  # Copy data
+                #         # Copy attributes
+                #         for attr in var.ncattrs():
+                #             try:
+                #                 dst_var.setncatts({attr: var.getncattr(attr)})
+                #             except:
+                #                 pass
+                if variableList[0] in src.variables:
+                    lat = src.variables[variableList[0]]
+                    lat_dst_var = dst.createVariable(variableList[0], np.float32, lat.dimensions)
+                    lat_dst_var[:] = lat[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lat.ncattrs():
+                    #     try:
+                    #         lat_dst_var.setncatts({attr: lat.getncattr(attr)})
+                    #     except:
+                    #         pass
+                if variableList[1] in src.variables:
+                    lon = src.variables[variableList[1]]
+                    lon_dst_var = dst.createVariable(variableList[1], np.float32, lon.dimensions)
+                    lon_dst_var[:] = lon[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lon.ncattrs():
+                    #     try:
+                    #         lon_dst_var.setncatts({attr: lon.getncattr(attr)})
+                    #     except:
+                    #         pass
+
+
+                # Copy variable and rename it to 'z'
+                if variableList[2] in src.variables:
+                    z_var = src.variables[variableList[2]]
+                    dst_z = dst.createVariable("z", np.float32, (z_var.dimensions[-2],z_var.dimensions[-1]))
+                    if len(z_var.dimensions) == 3:
+                        # Copy data
+                        dst_z[:] = z_var[:]
+                        print("test1")
+                    else:
+                        print("test2")
+                        # Define depth variable and logical defining
+                        # depth range to average over
+                        depth = src.variables['depth'][:];
+                        layerThickness = np.diff( np.append(0, depth) )
+                        depthLogical = (depth>self.options['depthAve'][0])&(depth<self.options['depthAve'][1])
                         
                         # Copy data
-                        x = np.nanmean(z_var[:][0][depthLogical]*layerThickness[depthLogical, np.newaxis, np.newaxis], axis=0)
+                        x = np.nanmean(z_var[:][0][depthLogical]*layerThickness[depthLogical, np.newaxis, np.newaxis], axis=0) / np.sum(layerThickness[depthLogical])
+                        self.x1 = z_var[:][0][depthLogical]
+                        self.x2 = layerThickness[depthLogical, np.newaxis, np.newaxis]
+                        self.x3 = np.sum(layerThickness[depthLogical])
+
                         dst_z[:] = x.data
 
                     # Copy attributes
-                    for attr in z_var.ncattrs():
-                        if attr != "_FillValue":
-                            try:
-                                #print("attr",attr)
-                                dst_z.setncatts({attr: z_var.getncattr(attr)})
-                            except:
-                                pass
+                    # for attr in z_var.ncattrs():
+                    #     if attr != "_FillValue":
+                    #         try:
+                    #             #print("attr",attr)
+                    #             dst_z.setncatts({attr: z_var.getncattr(attr)})
+                    #         except:
+                    #             pass
 
 
     def readnetCDF(self, year, month):
