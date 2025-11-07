@@ -608,6 +608,219 @@ def plotGlobal(lat, lon, values,
         plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
 
 
+def plotGlobalwBoundaries(lat, lon, values, BasinIDA,
+               outputDir = os.getcwd(),
+               fidName = "plotGlobal_wBoundaries.png",
+               cmapOpts={"cmap":"jet",
+                         "cbar-title":"cbar-title",
+                         "cbar-range":[0,1]},
+               pltOpts={"valueType": "Silhouette Structure",
+                        "valueUnits": "-",
+                        "plotTitle":"",
+                        "plotZeroContour":False,
+                        "nanSolidPoly":True,
+                        "nanSolidPolyOutline":True,
+                        "plotIntegerContours":True,
+                        "regionalZBoundaries":False,
+                        "region":[-180,180,-90,90],
+                        "projection":ccrs.Mollweide(),
+                        "transparent":True},
+               saveSVG=False,
+               savePNG=False):
+    """
+    plotGlobalwBoundaries function is used to plot global values
+    with overlaying basin boundaries.
+
+    Parameters
+    ----------
+    lat : NUMPY ARRAY
+        nx2n array representing cell registered latitudes, in deg,
+        ranging from [-90, 90]. Latitudes change from row to row.
+    lon : NUMPY ARRAY
+        nx2n array representing cell registered longitudes, in deg,
+        ranging from [-180, 180]. Longitudes change from column to column.
+    Values : NUMPY ARRAY
+        nx2n array representing cell registered geographic silhouette values, in [-] units.
+    BasinIDA : NUMPY ARRAY
+        nx2n array representing cell registered geographic basinIDs, in [-] units.
+    cmapOpts : DICTIONARY
+        A set of options to format the color map and bar for the plot
+    pltOpts : DICTIONARY
+        A set of options to format the plot
+    saveSVG : BOOLEAN
+        An option to save an SVG output. The default is False.
+    savePNG : BOOLEAN
+        An option to save an PNG output. The default is False.
+
+    Returns
+    -------
+    None.
+    """
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+    
+    ## Set projection and extent
+    projection = pltOpts.get("projection", ccrs.Mollweide())
+    region = pltOpts.get('region', [-180, 180, -90, 90])
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=projection)
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        pass
+    else:
+        ax.set_extent(region, crs=ccrs.PlateCarree())
+    
+    ## Set default for option to use regional Zvalue boundaries
+    regionalZBoundaries = pltOpts.get('regionalZBoundaries', False)
+    
+    if regionalZBoundaries:
+        # Set values outside of region to nan
+        values[ ~((lon>=pltOpts["region"][0])&(lon<=pltOpts["region"][1])&(lat>=pltOpts["region"][2])&(lat<=pltOpts["region"][3]))] = np.nan
+        # Reset indexing
+        cnt = 0;
+        for idx in np.unique(values):
+            if idx != np.nan:
+                values[values==idx] = cnt
+                cnt+=1;
+        
+        cmapOpts["cbar-range"] = [0,np.nanmax(values)]
+        
+    ## Set if the mesh should be plotted
+    meshOpt = pltOpts.get('mesh', True)
+        
+    ## Set if solid polygons should be plotted for nan values.
+    nanSolidPoly        = pltOpts.get("nanSolidPoly", False)
+    nanSolidPolyOutline = pltOpts.get("nanSolidPolyOutline", False)
+
+    ## Set if the coastline should be plotted
+    coastlinesOpt = pltOpts.get("coastlines", False);
+
+    ## Set option to add contour for zero value
+    plotZeroContour = pltOpts.get("plotZeroContour", False);
+    
+    ## Set default option for plotIntegerContours
+    plotIntegerContours = pltOpts.get("plotIntegerContours", False);
+    
+    ## Get cmap at 'cbar-intervals'
+    cmapOpts["cmap"] =  plt.cm.get_cmap(cmapOpts["cmap"])
+    
+    ## Add the plot using pcolormesh
+    if meshOpt:
+        try:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0],
+                                vmax=cmapOpts['cbar-range'][1],
+                                zorder=0)
+        except:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0],
+                                vmax=cmapOpts['cbar-range'][1],
+                                zorder=0)
+
+    ## Add zero value contour
+    if plotZeroContour:
+        # Set any np.nan values to 0.ccrs
+        values[np.isnan(values)] = 0;
+        zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+    ## Add solid polygons for nan values
+    if nanSolidPoly:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = np.nan;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        mesh2 = ax.pcolormesh(lon, lat, valuesNan,
+                              transform=ccrs.PlateCarree(),
+                              cmap='YlOrRd',
+                              vmin=0, vmax=3, zorder=1)
+    
+    ## Add Line around clusters of nan values
+    if nanSolidPolyOutline:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = 0;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        nanContour = ax.contour(lon, lat, valuesNan,
+                                levels=[1/2],
+                                colors='blue',
+                                linewidths=1.1,
+                                transform=ccrs.PlateCarree(),
+                                zorder=2)
+
+    ## Add contours in integer steps (useful for dividing catagorical data)
+    valuesContour = cp.deepcopy(BasinIDA)
+    if plotIntegerContours:
+        # Set any np.nan values to 0.
+        for i in range(len(np.unique(BasinIDA))):
+            valuesContour[BasinIDA==i] = 1;
+            valuesContour[BasinIDA!=i] = 0;
+            ax.contour(lon, lat, valuesContour,
+                       levels=[1/2],
+                       colors=pltOpts.get("boundaryColor", 'k'),
+                       linewidths=pltOpts.get("boundaryLinewidth", 1),
+                       transform=ccrs.PlateCarree(),
+                       zorder=1)
+
+            
+            
+    ## Add coastlines
+    if coastlinesOpt:
+        ax.coastlines(color='blue', linewidth=1, zorder=10)
+
+    ## Add a colorbar
+    if meshOpt:
+        cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+
+        ## Set cbar name
+        if regionalZBoundaries:
+            cbar.set_label(label="Regional {} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        else:
+            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        gl = ax.gridlines(draw_labels=False,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 30),
+                          ylocs=np.arange(region[2], region[3]+1, 30)
+                         )
+    else:
+        gl = ax.gridlines(draw_labels=True,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 20),
+                          ylocs=np.arange(region[2], region[3]+1, 20)
+                         )
+
+        gl.xlabels_top = False
+        gl.xlabels_bottom = True
+        gl.ylabels_left = True
+        gl.ylabels_right = False
+
+        # Set the tick label color here
+        gl.xlabel_style = {"color": "red", "size": 10, "rotation": 0}
+        gl.ylabel_style = {"color": "red", "size": 10, "rotation": 0}
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    ## Set transparency value
+    try:
+        pltOpts["transparent"];
+    except:
+        pltOpts["transparent"] = False;
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=600, transparent=pltOpts["transparent"])
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+
+
+
 def plotGlobalSilhouette(lat, lon, values, BasinIDA,
                outputDir = os.getcwd(),
                fidName = "plotGlobal_silhouette.png",
@@ -2285,6 +2498,476 @@ class eaNodes():
             fig.show()
 
 
+class edllNodes():
+
+    def __init__(self, inputs={"undefined":True}, precalculated=False, precalculate=False, region=None):
+        '''
+        Initiation of edllNodes class that is used for creating a grid of
+        nodes that represent equally spaced points (in latitude and longitude).
+        Note, that this class might seem travial, but is used such that outputs
+        grid attributes are represented in the same format as eaNodes.
+
+        Parameters
+        -----------
+        inputs : DICTIONARY
+            inputs["resolution"] : FLOAT
+                Spatial resolution in degrees (i.e., node spacing)
+            inputs["dataGrid"] : STRING
+                Path to input data grid
+        precalculated : BOOLEAN
+            An option to read a precalculated set of node locations, connections,
+            and other eaNodes object defined values. The default is False.
+        precalculate : BOOLEAN
+            An option to write a precalculated set of node locations, connections,
+            and other eaNodes object defined values. The default is False.
+        region : NUMPY ARRAY
+            2x2 array of [Lower left corner [lon, lat], Upper right
+            corner [lon, lat]] that describes the analysis region.
+
+        Relevant Class Attributes
+        --------------------------
+        self.ealat : NUMPY VECTOR
+            node locations, latitude in degrees. 
+        self.ealon : NUMPY VECTOR
+            node locations, longitude in degrees.
+        self.connectionNodeDis : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 distance 3) connection 2 distance 4)
+            connection 3 distance, and 5) connection 4 distance.
+        self.connectionNodeIDs : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 3) connection 2 4) connection 3, and 5)
+            connection 4.
+
+        '''
+        # Assign inputs
+        self.inputs = inputs
+
+        # Assign class attributes
+        try:
+            if inputs["undefined"]:
+                self.resolution = .1;
+                self.dataGrid   = "/home/bogumil/Documents/data/Muller_etal_2019_Tectonics_v2.0_netCDF/Muller_etal_2019_Tectonics_v2.0_AgeGrid-0.nc";
+                self.interpGrid = "EA_Nodes_{}_LatLon.txt".format(self.resolution);
+                self.output     = "Muller_etal_2019_Tectonics_v2.0_AgeGrid-0_EASampled.nc";
+        except:
+            self.resolution = self.inputs["resolution"];
+            self.dataGrid   = self.inputs["dataGrid"];
+            self.region     = region;
+        if region is None:
+            self.region     = np.array([[-100, 20], [-80, 31]]); # [Lower left corner (lon, lat), Upper right corner (lon, lat)]
+
+
+        # Create directory to store precalculated files within
+        if not os.path.exists(os.getcwd()+"/eaNodes"):
+            os.mkdir(os.getcwd()+"/eaNodes")
+
+        # Assign more class attributes (filepaths)
+        self.filename1  = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_xyz.txt'
+        self.filename2  = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_LatLon.txt'
+        self.interpGrid = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_LatLon.txt';
+        self.output     = os.getcwd()+"/eaNodes/EASampled.txt";
+
+
+        # Define all attributes assigned to object.
+        self.color  = None; # Holds the colors used to distinguish between regions points on a sphere [meaningless for edllNodes - has meaning in eaNodes]. 
+        self.hist   = None; #
+
+        # Equal area node locations
+        self.ealon = None;  # Equal area node longitude
+        self.ealat = None;  # Equal area node latitude
+        
+        # Set read/write options
+        self.precalculated = precalculated;
+        self.precalculate  = precalculate;
+        
+        # node interpolated data
+        # This dictionary can be added to with self.interp2IrregularGrid(...). 
+        self.data = {};
+
+        # Try to read precalculated node grid 
+        if self.precalculated:
+            self.precalculated = self.save_or_load_attributes(mode="r")
+
+
+    def save_or_load_attributes(self, mode="w"):
+        """
+        Save or load all class attributes to/from a single .npz file.
+
+        Parameter
+        ----------
+        mode : STRING
+            'w' to wrtie attributes, 'r' to read attributes.
+
+        File
+        -----
+            File will be named 'EA_Nodes_{self.resolution}.npz'
+        """
+        # Create filename
+        filename = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_xyz.txt'.replace("_xyz.txt", ".npz")
+
+        if mode == "w":
+            attr_dict = {
+                'inputs': self.inputs,
+                'resolution': self.resolution,
+                'dataGrid': self.dataGrid,
+                'interpGrid': self.interpGrid,
+                'output': self.output,
+                'filename1': self.filename1,
+                'filename2': self.filename2,
+                'color': self.color,
+                'hist': self.hist,
+                'ealon': self.ealon,
+                'ealat': self.ealat,
+                'data': self.data,
+                'connectionNodeIDs': self.connectionNodeIDs,
+                'connectionNodeDis': self.connectionNodeDis
+            }
+            # Save using numpy savez (allow_pickle needed for objects like dicts)
+            np.savez_compressed(filename, **attr_dict)
+            print(f"Attributes saved to {filename}")
+
+            return True
+
+        elif mode == "r":
+            if not os.path.exists(filename):
+                print(f"File {filename} does not exist. Cannot load. {filename} will be created for current use and written (precalculated) for future use at {self.resolution:0.1f} degree spatial resolution.")
+                return False
+            
+            print(f"File {filename} does exist. loading. {filename} will be read for current use.")
+
+            npzfile = np.load(filename, allow_pickle=True)
+
+            # Assign attributes from file
+            self.inputs = npzfile['inputs'].item()
+            self.resolution = npzfile['resolution'].item()
+            self.dataGrid = npzfile['dataGrid'].item()
+            #self.interpGrid = npzfile['interpGrid'].item()
+            #self.output = npzfile['output'].item()
+            #self.filename1 = npzfile['filename1'].item()
+            #self.filename2 = npzfile['filename2'].item()
+            self.color = npzfile['color']
+            self.hist = npzfile['hist'].item()
+            self.ealon = npzfile['ealon']
+            self.ealat = npzfile['ealat']
+            self.data = npzfile['data'].item()
+            self.connectionNodeIDs = npzfile['connectionNodeIDs']
+            self.connectionNodeDis = npzfile['connectionNodeDis']
+
+            # Assign more class attributes (filepaths)
+            # These are not defined with the values stored in the
+            # .npz file since the .npz file might have been constructed
+            # on a different system.
+            self.filename1  = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_xyz.txt'
+            self.filename2  = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_LatLon.txt'
+            self.interpGrid = os.getcwd()+"/eaNodes/"+f'EDLL_Nodes_{self.resolution:0.1f}_LatLon.txt';
+            self.output     = os.getcwd()+"/eaNodes/EASampled.txt";
+
+            print(f"Attributes loaded from {filename}")
+
+            return True
+        else:
+            print("Mode must be 'w' or 'r'.")
+
+
+    def lonlat2xyz(self, longitude, latitude, radius=1):
+        """
+        Convert latitude and longitude on a sphere to XYZ coordinates.
+
+        Parameters:
+        longitude (float): Longitude in degrees
+        latitude (float): Latitude in degrees
+        radius (float): Radius of the sphere (default is Earth's mean radius in meters)
+
+        Returns:
+        tuple: (X, Y, Z) coordinates
+        """
+        # Convert degrees to radians
+        lat_rad = np.radians(latitude)
+        lon_rad = np.radians(longitude)
+
+        # Compute XYZ coordinates
+        x = radius * np.cos(lat_rad) * np.cos(lon_rad)
+        y = radius * np.cos(lat_rad) * np.sin(lon_rad)
+        z = radius * np.sin(lat_rad)
+
+        return x, y, z
+
+    def xyz2lonlat(self, x, y, z, radius=1):
+        """
+        Convert XYZ coordinates on a sphere to latitude and longitude.
+
+        Parameters:
+        x (float): X coordinate
+        y (float): Y coordinate
+        z (float): Z coordinate
+        radius (float): Radius of the sphere (default is Earth's mean radius in meters)
+
+        Returns:
+        tuple: (latitude in degrees, longitude in degrees)
+        """
+
+        # Compute longitude (lambda)
+        longitude = np.degrees(np.arctan2(y, x))
+
+        # Compute latitude (phi)
+        hyp = np.sqrt(x**2 + y**2)  # Projection on the equatorial plane
+        latitude = np.degrees(np.arctan2(z, hyp))
+
+        return longitude, latitude
+    
+
+    def makegrid(self, plotq=0):
+        '''
+        makegrid creates a grid of nodes that represent equally
+        spaced points (in latitude and longitude) and determines
+        the edges (links) between adjacent nodes. Note that this
+        grid will be limited to the gate set by self.region.
+        
+        
+        Re(defined)
+        ------------
+        self.ealat : NUMPY VECTOR
+            Equal area node locations, latitude in degrees. 
+        self.ealon : NUMPY VECTOR
+            Equal area node locations, longitude in degrees.
+        self.connectionNodeDis : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 distance 3) connection 2 distance 4)
+            connection 3 distance, and 5) connection 4 distance.
+        self.connectionNodeIDs : NUMPY ARRAY
+            nodeCnt x 5 array with columns indicating 1) (nodei) with
+            2) connection 1 3) connection 2 4) connection 3, and 5)
+            connection 4.
+
+        '''
+
+        ###################
+        #### Section 1 ####
+        ###################
+        # Define the coordinates of nodes within region
+        if self.region[0][0] > self.region[1][0]: # region passes through -180/180 line
+            Lon = np.arange(self.region[0][0], 360+self.region[1][0]+self.resolution/2, self.resolution); 
+            Lon[Lon>=180] = Lon[Lon>=180]-360
+        else:
+            Lon = np.arange(self.region[0][0], self.region[1][0]+self.resolution/2, self.resolution);
+        Lat = np.arange(self.region[0][1], self.region[1][1]+self.resolution/2, self.resolution);
+
+        LonArray, LatArray = np.meshgrid(Lon, Lat); 
+
+        self.ealon = LonArray.flatten()
+        self.ealat = LatArray.flatten()        
+        
+        xyz = np.array(self.lonlat2xyz(self.ealon, self.ealat))
+        # LonLat = np.array(self.xyz2lonlat(xyz[0],xyz[1],xyz[2]))
+        
+
+        # Create node ids
+        nodeIDs = np.arange(0, np.size(LonArray), 1)
+                                    
+        ###################
+        #### Section 3 ####
+        ###################
+        # Convert the grid back to spherical coords, and save the results
+        # Saving the grid points (but don't save duplicates)
+        with open(self.filename1, 'w') as f:
+            for nodeID, x, y, z in np.vstack( (nodeIDs ,xyz) ).T:
+                f.write(f'{int(nodeID)}, {x:.8e}, {y:.8e}, {z:.8e}\n');
+
+        with open(self.filename2, 'w') as f:
+            for lon, lat in zip(self.ealon, self.ealat):
+                f.write(f'{lon:.8e}, {lat:.8e}\n');
+                        
+            
+        ###################
+        #### Section 3 ####
+        ###################
+        # Convert the grid back to spherical coords, and save the results
+        # Saving the grid points (but don't save duplicates)
+        with open(self.filename1, 'w') as f:
+            for nodeID, x, y, z in np.vstack( (nodeIDs ,xyz) ).T:
+                f.write(f'{int(nodeID)}, {x:.8e}, {y:.8e}, {z:.8e}\n');
+
+        with open(self.filename2, 'w') as f:
+            for lon, lat in zip(self.ealon, self.ealat):
+                f.write(f'{lon:.8e}, {lat:.8e}\n');
+            
+            
+
+            
+        ##############################
+        #### Values yet to define ####
+        ##############################
+        # self.connectionNodeIDs = npzfile['connectionNodeIDs']
+        # self.connectionNodeDis = npzfile['connectionNodeDis']
+        
+        # self.connectionNodeIDs:
+        #     nodeCNT x 5
+        #     ID, connection dis 1,  connection dis 2,  connection dis 3,  connection dis 4
+        
+        # self.connectionNodeDis:
+        #     nodeCNT x 5
+        #     ID, connection ID  1,  connection ID  2,  connection ID  3,  connection ID  4
+        
+        
+        
+        ###################
+        #### Section 4 ####
+        ###################
+        maxEdgeConnections = 4
+        # Define array to hold node connection ids
+        self.connectionNodeIDs = np.zeros(shape=(len(self.ealon), 1+maxEdgeConnections));
+        self.connectionNodeIDs[:,0] = np.arange(len(self.ealon)); # Set evaluation node IDs
+        
+        # Define array to hold node connection distances
+        self.connectionNodeDis = np.zeros(shape=(len(self.ealon), 1+maxEdgeConnections));
+        self.connectionNodeDis[:,0] = np.arange(len(self.ealon)); # Set evaluation node IDs
+        
+        # Make Node ID array
+        IDArray = np.reshape(nodeIDs, np.shape(LonArray) )
+        
+        ## Find all neighboring nodes (i.e., fill out self.connectionNodeIDs array)
+        ### Western node
+        WNodeID  = np.roll(IDArray,   1, axis=1)        
+        ### Eastern node
+        ENodeID  = np.roll(IDArray,  -1, axis=1)
+        ### Northern node
+        NNodeID  = np.roll(IDArray,   1, axis=0)
+        ### Southern node
+        SNodeID  = np.roll(IDArray,  -1, axis=0)
+        
+        ## Set Node Western, Eastern, Northern, and Southern NodeIDs
+        self.connectionNodeIDs[:, 1] = WNodeID.flatten()[nodeIDs]
+        self.connectionNodeIDs[:, 2] = ENodeID.flatten()[nodeIDs]
+        self.connectionNodeIDs[:, 3] = NNodeID.flatten()[nodeIDs]
+        self.connectionNodeIDs[:, 4] = SNodeID.flatten()[nodeIDs]
+        
+        ## Remove all wrapped region node connections since the region should never be wrapped
+        WNodeID = np.reshape(self.connectionNodeIDs[:, 1], np.shape(LonArray))
+        WNodeID[:,0] = None
+        self.connectionNodeIDs[:, 1] = WNodeID.flatten()
+        
+        ENodeID = np.reshape(self.connectionNodeIDs[:, 2], np.shape(LonArray))
+        ENodeID[:,-1] = None
+        self.connectionNodeIDs[:, 2] = ENodeID.flatten()
+        
+        NNodeID = np.reshape(self.connectionNodeIDs[:, 3], np.shape(LonArray))
+        NNodeID[0,:] = None
+        self.connectionNodeIDs[:, 3] = NNodeID.flatten()
+        
+        SNodeID = np.reshape(self.connectionNodeIDs[:, 4], np.shape(LonArray))
+        SNodeID[-1,:] = None
+        self.connectionNodeIDs[:, 4] = SNodeID.flatten()
+        
+        # Find distance between all neighboring nodes
+        for nodeID in self.connectionNodeIDs[:, 0]:
+            nodeID = int(nodeID)
+            # Set neighboring node ids
+            neighboringNodeIDs = self.connectionNodeIDs[nodeID, 1:][ ~np.isnan(self.connectionNodeIDs[nodeID, 1:]) ];
+            neighboringLats    = LatArray.flatten()[neighboringNodeIDs.astype(int)]
+            neighboringLons    = LonArray.flatten()[neighboringNodeIDs.astype(int)]
+            
+            # Find distance between evaluation node and neighboring nodes
+            distance = haversine_distance(lat1=LatArray[nodeID==IDArray],
+                                          lon1=LonArray[nodeID==IDArray],
+                                          lat2=neighboringLats,
+                                          lon2=neighboringLons,
+                                          radius=1);
+            
+            # Set neighboring node distances
+            self.connectionNodeDis[nodeID, 1:][ ~np.isnan(self.connectionNodeIDs[nodeID, 1:]) ] = distance
+            
+        ###################
+        #### Section 5 ####
+        ###################
+        if plotq==1:
+            # Create the unit sphere data
+            r =.95;
+            u = np.linspace(0, 2 * np.pi, 100)
+            v = np.linspace(0, np.pi, 100)
+            x = r*np.outer(np.cos(u), np.sin(v))
+            y = r*np.outer(np.sin(u), np.sin(v))
+            z = r*np.outer(np.ones(np.size(u)), np.cos(v))
+
+            # Create the figure
+            fig = go.Figure()
+
+            # Set the layout
+            fig.update_layout(
+                title='Unit Equal Area Spaced Node',
+                scene=dict(
+                    xaxis_title='X',
+                    yaxis_title='Y',
+                    zaxis_title='Z',
+                    xaxis=dict(range=[-1.2, 1.2], visible=False),
+                    yaxis=dict(range=[-1.2, 1.2], visible=False),
+                    zaxis=dict(range=[-1.2, 1.2], visible=False),
+                    aspectratio=dict(x=1, y=1, z=1),
+
+                )
+            )
+            # Add the sphere surface
+            fig.add_trace(go.Surface(x=x, y=y, z=z, colorscale='greys', opacity=0.8, colorbar=dict(tickvals=[-1,0,1])))
+
+            
+            # Add the Node location scatter plot
+            fig.add_trace(go.Scatter3d(x=xyz[0,:],
+                                    y=xyz[1,:],
+                                    z=xyz[2,:],
+                                    mode='markers',
+                                    marker=dict(size=5)))
+        if plotq:
+            # Show the plot
+            fig.show()
+
+        # Write precalculated node grid 
+        if self.precalculate:
+            self.save_or_load_attributes(mode="w")
+
+
+    def interp2IrregularGrid(self, path, name, resolution=1):
+        """
+        interp2IrregularGrid method is used to interpolate data at
+        an input path to the node points.
+
+        Parameters
+        -----------
+        path : STRING
+            A path to some input netCDF4 file that will be used to
+            find interpolated values at nodes. 
+        name : STRING
+            The name of the data. This will be used to define a dictionary
+            entry that points to the interpolated data.  
+
+        (Re)define
+        -----------
+        self.data : DICTIONARY
+            A dictionary that holds the data that has been interpolated to
+            the nodes. self.data[name] is the added entry.
+
+        self.connectionNodeIDs : NUMPY ARRAY
+            A len(self.data) x 5 array of values with column 1 corresponding
+            to node index, and column 2-5 correspond to the first 4 closest
+            connected node indices.
+        """
+        # Interpolate the values to node locations
+        # Note that the region R must be set to -181/181 so that 
+        # nodes at edges lon=-180=180 and lon=0 will have appropriately
+        # interpolated values (i.e., not result in an nan value when
+        # a value does exist).
+        os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
+        #os.system("gmt grdtrack -R-180/180/-90/90 {0} -G{1} -N > {2} -Vq".format(self.filename2, path, 'temp.txt'))
+        
+        # Nearest neighbor interpolation (needed to get values at north/south pole)
+        #os.system("gmt grdtrack -R-181/181/-90/90 {0} -G{1} -nn -N > {2}".format(self.filename2, path, 'temp.txt'))
+
+        # Read interpolated values
+        self.data[name] = np.loadtxt('temp.txt', delimiter='\t',usecols=[2])
+
+        # Delete temporary file
+        os.system('temp.txt');
+        
+
 def get_plotly_colorscale(cmap_name="viridis", nan_color="rgba(0,0,0,0)", n_colors=256):
     """
     Converts a Matplotlib colormap to a Plotly colorscale, adding transparency for NaN values.
@@ -2669,7 +3352,7 @@ class BasinsEA():
     given a bathymetry model netCDF4.
     """
 
-    def __init__(self, dataDir, filename, body):
+    def __init__(self, dataDir, filename, body, region=np.array([[-180,-90],[180,90]])):
         """
         Initialization of Basins class.
 
@@ -2684,6 +3367,9 @@ class BasinsEA():
             Name of the input terrestial body. This is only used for
             visualization purposes, not naming convections when writing
             model files.
+        region : NUMPY ARRAY
+            2x2 array of [Lower left corner [lon, lat], Upper right
+            corner [lon, lat]] that describes the analysis region.
         
         Define
         ----------
@@ -2713,6 +3399,9 @@ class BasinsEA():
 
         # Define inputs for the class that makes equal area
         EAinputs = {"resolution":np.diff(self.nc['lon'][:])[0], "dataGrid":"{}/{}".format(dataDir, filename), "parameter": "bathymetry", "parameterUnit":"m", "parameterName":"bathymetry" }
+
+        # Define region of analysis (default is global)
+        self.region = region;
 
         # Define attribute to hold multiple scalar fields.
         # These will be used to determine edge weights.
@@ -3215,6 +3904,9 @@ class BasinsEA():
         
         else:
             if initiation:
+                # initiation prompts the creation of a graph network (include node/edge weight calculations)
+
+
                 # Only reduce resolution if option is set. Note that this must
                 # be consistent with written network
                 if not reducedRes['on']:
@@ -3236,16 +3928,22 @@ class BasinsEA():
                 ######################
                 ### Create network ###
                 ######################
-                # Define equal area points
-                # eaPoint.lat, eaPoint.lon are created here
-                # Note that only one eaNodes object is need for multiple fields.
-                # Use the first used field to create the object
-                # self.eaPoint.precalculated is set to False is the grid has not been
-                # precalculated. Otherwise the precalculated grid is read in.
-                self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
-                                    precalculate=True,
-                                    precalculated=True);
-                                    
+                if (self.region[0,0]==-180) & (self.region[1,0]==180) & (self.region[0,1]==-90) & (self.region[1,1]==90):
+                    # Define equal area points
+                    # eaPoint.lat, eaPoint.lon are created here
+                    # Note that only one eaNodes object is need for multiple fields.
+                    # Use the first used field to create the object
+                    # self.eaPoint.precalculated is set to False is the grid has not been
+                    # precalculated. Otherwise the precalculated grid is read in.
+                    self.eaPoint = eaNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
+                                        precalculate=True,
+                                        precalculated=True);
+                else:
+                    self.eaPoint = edllNodes(inputs = self.Fields[self.Fields['usedFields'][0]],
+                                        precalculate=True,
+                                        precalculated=True,
+                                        region=self.region);
+
 
                 # Creates
                 # 1) Set of nodes that represent equal area quadrangles.
@@ -4146,7 +4844,7 @@ class BasinsEA():
         # small basin mergers results in X chosen basins.
         ReducedClusters=NodeClustering(communities=self.Rcommunities,
                             graph=self.G,
-                            method_name="consensus_ledien_fixed",
+                            method_name="consensus_ledien",
                             method_parameters={
                                 "resolution_parameter": resolution,
                                 "runs": ensembleSize,
@@ -4155,7 +4853,7 @@ class BasinsEA():
 
         LGNClusters=NodeClustering(communities=self.communitiesFinal,
                             graph=self.G,
-                            method_name="consensus_ledien_fixed",
+                            method_name="consensus_ledien",
                             method_parameters={
                                 "resolution_parameter": resolution,
                                 "runs": ensembleSize,
