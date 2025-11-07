@@ -3,7 +3,7 @@
 """
 Created on Tue Sep  6 15:20:00 2024
 
-@author: bogumilmatt-21
+@author: Matthew Bogumil
 """
 
 #######################################################################
@@ -27,9 +27,9 @@ import time
 #######################################################################
 ######################### Import helper modules #######################
 #######################################################################
-from ExoCcycle import utils # type: ignore
-from ExoCcycle import Bathymetry # type: ignore
-from ExoCcycle import functionClassBuilding # type: ignore
+from ExoCcycle import utils                     # type: ignore
+from ExoCcycle import Bathymetry                # type: ignore
+from ExoCcycle import functionClassBuilding     # type: ignore
 
 
 
