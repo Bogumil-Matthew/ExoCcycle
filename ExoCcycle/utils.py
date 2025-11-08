@@ -525,7 +525,7 @@ def weightedAvgAndStd(values, weights):
     variance = np.average((masked_values - average)**2, weights=masked_weights)
     return (average, np.sqrt(variance))
 
-def areaWeights(resolution=1, radius=6371e3, LonStEd=[-180, 180], LatStEd=[-90, 90]):
+def areaWeights(resolution=1, radius=6371e3, LonStEd=[-180, 180], LatStEd=[-90, 90], verbose=False):
     """
     Compute a 2D array of spherical surface area weights based on latitude and longitude resolution.
 
@@ -553,6 +553,8 @@ def areaWeights(resolution=1, radius=6371e3, LonStEd=[-180, 180], LatStEd=[-90, 
         LatStEd (list[float], optional):  
             Two-element list specifying the starting and ending latitude bounds in degrees.  
             Defaults to ``[-90, 90]``.
+        verbose (bool):
+            Option to report additional information.
 
     Returns:
         tuple:
