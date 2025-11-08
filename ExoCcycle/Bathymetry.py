@@ -10,6 +10,7 @@ Created on Tue Sep  6 15:20:00 2024
 ############################### Imports ###############################
 #######################################################################
 from ExoCcycle import utils # type: ignore
+from ExoCcycle import plotHelper # type: ignore
 import os
 from netCDF4 import Dataset
 import numpy as np
@@ -384,7 +385,7 @@ class BathyMeasured():
                 print((self.elev));
             
             # Plot global topography model
-            utils.plotGlobal(self.lat, self.lon, self.elev,
+            plotHelper.plotGlobal(self.lat, self.lon, self.elev,
                              cmapOpts={"cmap":"viridis",
                                        "cbar-title":"cbar-title",
                                        "cbar-range":[np.min(np.min(self.elev)),np.max(np.max(self.elev))]},
@@ -1392,7 +1393,7 @@ class BathyRecon():
             if verbose:
                 blues_cm = mpl.colormaps['Blues'].resampled(100)
                 self.highlatlat = 90
-                utils.plotGlobalwHist(self.lat, self.lon, self.bathymetry,
+                plotHelper.plotGlobalwHist(self.lat, self.lon, self.bathymetry,
                                      self.binEdges, self.bathymetryAreaDist_wHighlat, self.bathymetryAreaDist, self.highlatlat,
                                      outputDir = os.getcwd(),
                                      fidName = "plotGlobal-Test.png",
