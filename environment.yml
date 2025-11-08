@@ -1,0 +1,56 @@
+name: exoccycle-dev
+channels:
+  - conda-forge
+  - nodefaults
+
+dependencies:
+  # ---- Core Python ----
+  - python=3.11
+
+  # ---- Numeric / Sci stack ----
+  - numpy>=1.26
+  - scipy>=1.10
+  - pandas>=1.5
+  - scikit-learn
+  - tqdm
+
+  # ---- NetCDF / HDF I/O ----
+  - netcdf4
+  - cftime
+  - hdf5
+  - libnetcdf
+
+  # ---- Plotting / Viz ----
+  - matplotlib
+  - plotly
+
+  # ---- Geospatial stack (needed by Cartopy) ----
+  - cartopy
+  - shapely>=2
+  - proj
+  - proj-data
+  - geos
+  - pyproj
+
+  # ---- Graph / Community detection ----
+  - networkx
+  - python-igraph
+  - leidenalg
+  - python-louvain
+  - cdlib  # includes cdlib.evaluation and NodeClustering
+
+  # ---- GMT + wrapper (PyGMT pulls GMT runtime libs too) ----
+  - gmt>=6.2,<7
+  - pygmt>=0.17
+  - gshhg             # coastlines for GMT
+  - dcw-gmt           # country polygons for GMT
+
+  # ---- Sphinx docs toolchain (optional but handy here) ----
+  - sphinx>=7
+  - myst-parser
+  - sphinx-copybutton
+  - sphinx-autodoc-typehints
+  - sphinx-rtd-theme
+
+  # ---- Misc runtime niceties ----
+  - pip

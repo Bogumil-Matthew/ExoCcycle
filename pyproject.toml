@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=64", "wheel", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_scheme = "post-release"
+local_scheme = "node-and-date"
+
+[project]
+name = "ExoCcycle"
+version = "0.1.0"
+description = "ExoCcycle: tools for basin detection and carbon-cycle modeling"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  { name = "ExoCcycle authors", email = "bogumilcodes@gmail.edu" }
+]
+requires-python = ">=3.9"
+
+# runtime dependencies (minimal)
+dependencies = [
+  "numpy>=1.22",
+  "scipy>=1.8",
+]
+
+# optional extras (install via `pip install .[docs]`)
+[project.optional-dependencies]
+docs = [
+  "sphinx>=7",
+  "myst-parser",
+  "sphinx-copybutton",
+  "sphinx-autodoc-typehints",
+  "sphinx-rtd-theme",
+]
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/ExoCcycle"
+Documentation = "https://your-docs-site"
+Issues = "https://github.com/your-org/ExoCcycle/issues"
+
+[tool.setuptools.packages.find]
+#exclude = ["tests", "docs", "examples"]
+exclude = ["tests", "docs", "examples"]
+
+[tool.setuptools.package-data]
+"ExoCcycle" = ["data/*"]
