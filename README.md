@@ -9,4 +9,5 @@ There are jupyter notebooks within the JN folder. After dowloading/cloning this 
 Download the repo and install:
 
 cd ExoCcycle-main
+
 pip install -e .
