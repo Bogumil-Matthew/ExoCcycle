@@ -2747,9 +2747,14 @@ class BasinsEA():
 
         # An option to use an input field array
         # as a mask
+        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", False)
+        fieldMaskParameter['fliplr'] = fieldMaskParameter.get("fliplr", False)
 
         if Field == 'bathymetry':
-            self.maskValue = self.bathymetry;
+            if fieldMaskParameter['flipud']:
+                self.maskValue = cp.deepcopy(np.flipud(self.bathymetry));
+            else:
+                self.maskValue = cp.deepcopy(self.bathymetry);
         else:
             self.maskValue = Field;
         
@@ -2802,7 +2807,10 @@ class BasinsEA():
             self.maskValue = mask;
             self.bathymetry = field;
         else:
-            self.maskValue = cp.deepcopy(self.bathymetry);
+            if fieldMaskParameter['flipud']:
+                self.maskValue = cp.deepcopy(np.flipud(self.bathymetry));
+            else:
+                self.maskValue = cp.deepcopy(self.bathymetry);
             self.maskValue[~np.isnan(self.maskValue)] = 1;
 
     

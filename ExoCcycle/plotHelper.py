@@ -137,6 +137,9 @@ def plotGlobal(
                    cmapOpts=cmapOpts, pltOpts=pltOpts, savePNG=True)
         ```
     """
+    # Flip latitude values for plotting
+    lat = np.flipud(lat)
+
     # Copy values such that the arguments are not changed, if
     # say they are from a class attribute.
     values = cp.deepcopy(values)
@@ -426,6 +429,9 @@ def plotGlobalwBoundaries(
                               savePNG=True)
         ```
     """
+    # Flip latitude values for plotting
+    lat = np.flipud(lat)
+
     # Copy values such that the arguments are not changed, if
     # say they are from a class attribute.
     values = cp.deepcopy(values)
@@ -711,6 +717,9 @@ def plotGlobalSilhouette(
                              cmapOpts=cmapOpts, pltOpts=pltOpts, savePNG=True)
         ```
     """
+    # Flip latitude values for plotting
+    lat = np.flipud(lat)
+
     # Copy values such that the arguments are not changed, if
     # say they are from a class attribute.
     values = cp.deepcopy(values)
@@ -978,6 +987,9 @@ def plotGlobalwHist(
                         cmapOpts=cmapOpts, pltOpts=pltOpts, savePNG=True)
         ```
     """
+    # Flip latitude values for plotting
+    lat = np.flipud(lat)
+
     # Start making figure
     ## Create a figure
     
@@ -1104,6 +1116,9 @@ def plotLargeBasins(
                         fldName="figs", savePNG=True, verbose=True)
         ```
     """
+    # Flip latitude values for plotting
+    lat = np.flipud(lat)
+
     BasinIDAMod = cp.deepcopy(basins.BasinIDA)
     # Make weights mask
     areaWeights = cp.deepcopy(basins.areaWeights)
