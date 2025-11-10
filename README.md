@@ -8,15 +8,19 @@ There is jupyter notebook within the JN folder. After dowloading/cloning this re
 
 Procedure:
 1. Download the repo.
+```
+$ git clone https://github.com/Bogumil-Matthew/ExoCcycle.git
+```
 
 2. Navigate to the ExoCcycle folder (folder containing environment.yml file).
 ```
-$ cd .../ExoCcycle
+$ cd ExoCcycle/
 ```
 
 3. Create a conda environment to run the code/JN within:
 ```
-$ conda env create -f environment.yml.
+$ conda env create -f environment.yml
+$ conda activate exoccycle-dev
 ```
 
 4. Install python library:
@@ -26,7 +30,7 @@ $ pip install -e .
 
 5. Navigate to the JN/ folder.
 ```
-$ cd .../JN
+$ cd JN/
 ```
 
 6. Run jupyter-notebooks and recreate GMD manuscript analysis.
