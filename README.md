@@ -6,7 +6,7 @@ Currently, a primarily component of this library are its class/methods/functions
 There is jupyter notebook within the JN folder. After dowloading/cloning this repository, create a conda environment, open/run the GMD_Manuscript_Figures.ipynb examples to see use cases for the library.
 
 
-Procedure:
+Procedure (installation + GMD figure recreation):
 1. Download the repo.
 ```
 $ git clone https://github.com/Bogumil-Matthew/ExoCcycle.git
