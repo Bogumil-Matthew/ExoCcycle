@@ -33,9 +33,9 @@ $ pip install -e .
 $ cd JN/
 ```
 
-6. Run jupyter-notebooks and recreate GMD manuscript analysis.
+6. Run jupyter-notebooks and recreate GMD manuscript analysis. Make sure to select the kernel associated with the exoccycle-dev conda environment.
 ```
-$ jupyter-notebooks
+$ jupyter-notebook
 ```
 
 

@@ -6,6 +6,9 @@ channels:
 dependencies:
   # ---- Core Python ----
   - python=3.11
+  - jupyter
+  - ipykernel
+  - nb_conda_kernels
 
   # ---- Numeric / Sci stack ----
   - numpy>=1.26
@@ -36,14 +39,12 @@ dependencies:
   - networkx
   - python-igraph
   - leidenalg
-  - python-louvain
+  - louvain
   - cdlib  # includes cdlib.evaluation and NodeClustering
 
   # ---- GMT + wrapper (PyGMT pulls GMT runtime libs too) ----
   - gmt>=6.2,<7
   - pygmt>=0.17
-  - gshhg             # coastlines for GMT
-  - dcw-gmt           # country polygons for GMT
 
   # ---- Sphinx docs toolchain (optional but handy here) ----
   - sphinx>=7
