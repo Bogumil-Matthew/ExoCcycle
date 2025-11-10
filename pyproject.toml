@@ -8,11 +8,11 @@ local_scheme = "node-and-date"
 
 [project]
 name = "ExoCcycle"
-version = "0.1.0"
+version = "1.0.0"
 description = "ExoCcycle: tools for basin detection and carbon-cycle modeling"
 readme = "README.md"
 license = { file = "LICENSE" }
-authors = [{ name = "ExoCcycle authors", email = "bogumilcodes@gmail.edu" }]
+authors = [{ name = "ExoCcycle authors", email = "bogumilcodes@gmail.com" }]
 requires-python = ">=3.9"
 
 # --- Runtime dependencies (imports in your code) ---
