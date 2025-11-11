@@ -3986,9 +3986,9 @@ class BasinsEA():
             grid_data = np.where(np.isnan(self.maskValue), np.nan, grid_data)
 
         if propertyName == "basinID":
-            self.BasinIDA = grid_data
+            self.BasinIDA = np.flipud(grid_data)
         else:
-            return grid_data
+            return np.flipud(grid_data)
 
     def setEdgeParameter(self,
                          netCDF4Path,
