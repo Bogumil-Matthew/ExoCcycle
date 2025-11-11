@@ -2747,7 +2747,7 @@ class BasinsEA():
 
         # An option to use an input field array
         # as a mask
-        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", False)
+        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", True)
         fieldMaskParameter['fliplr'] = fieldMaskParameter.get("fliplr", False)
 
         if Field == 'bathymetry':
