@@ -241,15 +241,25 @@ class BathyMeasured():
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K -Vq> {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Venus":
-            if not os.path.exists("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model)):
-                os.system("wget -O {0}/topographies/{1}/topogrd.img https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img".format(data_dir, self.model));
+            if not os.path.exists("{0}/topographies/{1}/topogrd.dat".format(data_dir, self.model)):
+                os.system("wget -O {0}/topographies/{1}/topogrd.dat https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/topo/topogrd.dat".format(data_dir, self.model));
             if not os.path.exists("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model)):
                 # Write netCDF file
-                ## Read .img
-                fid = open("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model), 'rb');
-                elevmodel = np.fromfile(fid, dtype=np.uint8);
-                lonmodel, latmodel = np.meshgrid(np.arange(-180, 180, 1), np.arange(90-1/2, -90, -1) )
-                elevmodel = elevmodel.reshape(180,360);
+                ## Read .dat
+
+                elevmodel = np.loadtxt("{0}/topographies/{1}/topogrd.dat".format(data_dir, self.model))
+                elevmodel = elevmodel.flatten()
+                elevmodel = np.flipud(elevmodel.reshape(180,360))
+                elevmodel = np.roll(elevmodel, 60)
+                resolution = 1;
+                lonmodel, latmodel = np.meshgrid(np.arange(-180+resolution/2, 180, resolution),
+                                                 np.arange(-90+resolution/2,  90,  resolution))
+
+                #fid = open("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model), 'rb');
+                #elevmodel = np.fromfile(fid, dtype=np.uint8);
+                #resolution = 1
+                #lonmodel, latmodel = np.meshgrid(np.arange(-180, 180, 1), np.arange(-90+resolution/2, 90-resolution/2, resolution) )
+                #elevmodel = elevmodel.reshape(180,360);
                 ## Make netCDF file
                 ncfile = Dataset("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model), mode='w', format='NETCDF4_CLASSIC') 
 

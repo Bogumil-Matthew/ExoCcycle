@@ -8,7 +8,7 @@ local_scheme = "node-and-date"
 
 [project]
 name = "ExoCcycle"
-version = "1.0.0"
+version = "1.0.1"
 description = "ExoCcycle: tools for basin detection and carbon-cycle modeling"
 readme = "README.md"
 license = { file = "LICENSE" }

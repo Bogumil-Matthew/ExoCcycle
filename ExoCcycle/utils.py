@@ -2683,7 +2683,6 @@ class BasinsEA():
                 print("\tparameterUnit: {}".format(self.Fields[fieldNum]["parameterUnit"]))
                 print("\tparameterName: {}\n".format(self.Fields[fieldNum]["parameterName"]))
 
-
     def useFields(self, fieldList=np.array(["Field1"])):
         """
         useFields method is used to define which fields will be used to
@@ -2747,7 +2746,7 @@ class BasinsEA():
 
         # An option to use an input field array
         # as a mask
-        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", True)
+        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", False)
         fieldMaskParameter['fliplr'] = fieldMaskParameter.get("fliplr", False)
 
         if Field == 'bathymetry':
@@ -2812,8 +2811,6 @@ class BasinsEA():
             else:
                 self.maskValue = cp.deepcopy(self.bathymetry);
             self.maskValue[~np.isnan(self.maskValue)] = 1;
-
-    
 
     def simplifyNetCDF(self,
                        inputPath="path/file1.nc",
@@ -2932,8 +2929,6 @@ class BasinsEA():
         
         return returnDictionary
         
-        
-
     def defineBasins(self,
                      detectionMethod = {"method":"Louvain","resolution":1, "minBasinCnt":40, "minBasinLargerThanSmallMergers":True},
                      edgeWeightMethod = {"method":"useLogistic"},
@@ -3896,7 +3891,6 @@ class BasinsEA():
         
         self.BasinIDA = array;
     
-
     def interp2regularGrid(self,
                            dataIrregular=None,
                            mask=True,
@@ -3986,9 +3980,14 @@ class BasinsEA():
             grid_data = np.where(np.isnan(self.maskValue), np.nan, grid_data)
 
         if propertyName == "basinID":
-            self.BasinIDA = np.flipud(grid_data)
+            self.BasinIDA = grid_data
         else:
-            return np.flipud(grid_data)
+            return grid_data
+        # FIXME: Old-Code - Check that removal should be done in github repo
+        # if propertyName == "basinID":
+        #     self.BasinIDA = np.flipud(grid_data)
+        # else:
+        #     return np.flipud(grid_data)
 
     def setEdgeParameter(self,
                          netCDF4Path,
@@ -5666,7 +5665,6 @@ class BasinsEA():
         ### Write network Model ###
         ###########################
         nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
-
 
     def calculateBasinParameters(self, binEdges=None, fieldNum="Field1", fldName=os.getcwd(), verbose=True):
         """
