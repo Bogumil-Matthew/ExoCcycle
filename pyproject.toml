@@ -8,7 +8,7 @@ local_scheme = "node-and-date"
 
 [project]
 name = "ExoCcycle"
-version = "1.0.1"
+version = "1.0.0"
 description = "ExoCcycle: tools for basin detection and carbon-cycle modeling"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -25,7 +25,10 @@ dependencies = [
   # IO / grids
   "netCDF4>=1.6",
   "cftime>=1.6",
-
+  
+  # Copernicus Marine Toolbox
+  "copernicusmarine>=2.0",
+  
   # plotting
   "matplotlib>=3.8",
   "plotly>=5.0",
