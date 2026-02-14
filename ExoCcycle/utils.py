@@ -26,7 +26,6 @@ import plotly.graph_objects as go
 import cartopy.crs as ccrs # type: ignore
 from matplotlib.gridspec import GridSpec
 from matplotlib.colors import LinearSegmentedColormap
-import cmcrameri as cmc
 
 # Graph tools
 import networkx as nx # type: ignore
@@ -1972,856 +1971,6 @@ class edllNodes():
         # Delete temporary file
         os.system('temp.txt');
 
-############################################################################
-######################## Helper Functions (ODP-IODP) #######################
-############################################################################
-import pygplates
-import re
-class oceanDataCorrelation():
-
-    def __init__(self, inputs={}, outputs={}):
-        """
-        Initialization of oceanDataCorrelation class. Class is used to read ODP and IODP
-        sites, reconstruct them to periods where basin boundaries were calculated,
-        and find their pair-wise correlation throughout their existence.
-        """
-
-        # Users define 
-        # inputs["inputODPSummary", "seafloorAgeGrid", "plateMotionModel"]
-        # inputs["inputDataSummary"] is a dictionary with entries of paths to different sites .csv files
-        # outputs["directory"]
-
-        # Define input arguments to class attributes
-        inputs["inputDataSummary"]              = inputs.get("inputDataSummary", "/home/bogumil/Documents/data/oceanParameter/Summary_Drilling_Projects/DSDP_ODP_IODP_site_hole_summary.csv");
-        inputs["seafloorAgeGrid"]               = inputs.get("seafloorAgeGrid", "/home/bogumil/Documents/data/Muller_etal_2019_Tectonics_v2.0_netCDF/Muller_etal_2019_Tectonics_v2.0_AgeGrid-0.nc");
-        inputs["plateMotionModel"]              = inputs.get("plateMotionModel", "/home/bogumil/Documents/data/Muller_etal_2019_PlateMotionModel_v2.0_Tectonics");
-        outputs["UniquieDrillSitesLocations"]          = inputs.get("directory", os.getcwd()) + "/UniquieDrillSitesLocations.txt";
-        outputs["UniquieDrillSitesLocationsLithAge"]   = inputs.get("directory", os.getcwd()) + "/UniquieDrillSitesLocationsLithAge.txt";
-        outputs["UniquieDrillSitesLocationsGPML"]      = inputs.get("directory", os.getcwd()) + '/DrillSites-NoPartition.gpml'
-
-
-        ##################################################
-        ### Define some objects for later calculations ###
-        ##################################################
-        self.DrillSitesbasinIDBogumil24 = {};
-
-        #############################
-        ### Format IODP/ODP sites ###
-        #############################
-        # Read in IODP/ODP and DSDP 
-        DrillSites   = pd.read_csv(inputs["inputDataSummary"])
-
-        DrillSitesLeg      = DrillSites['Leg'].values;
-        DrillSitesSite     = DrillSites['Site'].values;
-        DrillSiteslatPt    = DrillSites['Latitude (decimal degrees)'].values;
-        DrillSiteslonPt    = DrillSites['Longitude (decimal degrees)'].values;
-        DrillSitesProgram  = DrillSites['program'].values;
-
-        # Parse out unique points (i.e., Leg/Site)
-        unique = np.unique(DrillSitesLeg+"_"+DrillSitesSite, return_index=True)[1]
-
-        DrillSitesLeg      = DrillSitesLeg[unique]
-        DrillSitesSite     = DrillSitesSite[unique]
-        DrillSiteslatPt    = DrillSiteslatPt[unique]
-        DrillSiteslonPt    = DrillSiteslonPt[unique]
-        DrillSitesProgram  = DrillSitesProgram[unique]
-
-        # Write data to simple file for use with gmt
-        np.savetxt(outputs["UniquieDrillSitesLocations"], np.stack( (DrillSiteslonPt, DrillSiteslatPt) ).T )
-
-        # Find age of ocean lithosphere at each location
-        cmd = "gmt grdtrack {0} -G{1} > {2}".format(outputs["UniquieDrillSitesLocations"],
-                                                    inputs["seafloorAgeGrid"],
-                                                    outputs["UniquieDrillSitesLocationsLithAge"])
-        os.system(cmd)
-
-        # Read in location lithospheric ages
-        DrillSitesCSV   = pd.read_csv(outputs["UniquieDrillSitesLocationsLithAge"], sep='\s+', names=["lon","lat","ageMa"])
-        DrillSitesAges  = DrillSitesCSV["ageMa"].values
-
-
-        ################################################################################
-        ### Rotate DSDP/ODP/IODP sites to locations throughout reconstruction period ###
-        ################################################################################
-        # Load one or more rotation files into a rotation model.
-        self.rotation_model = self.load_gplates_rot(inputs["plateMotionModel"])
-
-        # Create a reconstruct model from some reconstructable features and the rotation model.
-        self.reconstruct_model = self.load_gplates_features(inputs["plateMotionModel"])
-
-
-        # Create a feature collection with 
-        featureID = ["Program-{0}-Leg-{1}-Site-{2}".format(str(Program), str(Leg), str(Site)) for Program, Leg, Site in zip(DrillSitesProgram, DrillSitesLeg, DrillSitesSite)];
-
-        featureList = []
-
-        for featureidi, loni, lati  in zip(featureID, DrillSiteslonPt, DrillSiteslatPt):
-            featureList.append(
-                pygplates.Feature.create_reconstructable_feature(pygplates.FeatureType.gpml_seamount,
-                                                                pygplates.PointOnSphere((lati,loni)),
-                                                                name=featureidi
-                                                                )
-            )
-
-        feature_collection = pygplates.FeatureCollection(featureList)
-        feature_collection.write(outputs["UniquieDrillSitesLocationsGPML"])
-
-        # copy/assign reconstruction plate ID, valid time period and name
-        # from the partitioning features to their associated partitioned features:
-        self.features = pygplates.partition_into_plates(
-                self.reconstruct_model,
-                self.rotation_model,
-                feature_collection,
-                properties_to_copy = [
-                    pygplates.PartitionProperty.reconstruction_plate_id,
-                    pygplates.PartitionProperty.valid_time_period])
-
-
-        # Set the valid time period for each feature to the age of the ocean lithosphere (if known)
-        for featurei, agei in zip(self.features, DrillSitesAges):
-            if ~np.isnan(agei):
-                featurei.set_valid_time(begin_time=agei, end_time=0)
-
-    def reconstructSites(self, ages=np.arange(0,80+5,5)):
-        """
-        reconstructSites defines class attributes paleoDrillSites['{:0.0f}Ma-site'] 
-        and paleoDrillSites['{:0.0f}Ma-pos'] for input ages array. These
-        paleo-locations of ODP can be used for creating correlation matrices
-        for pre-calculated paleo-basin reconstructions.
-
-        paleoODPDrillSites['{:0.0f}Ma-pos'] holds latitude and longitude in column 0 and 1, respectively.
-        
-        Parameters
-        ----------
-        ages : ndarray
-            vector of ages, in ma, to reconstruct site locations
-            for. The default is np.arange(0,80+5,5).
-
-        Returns
-        -------
-        None.
-        """
-        ############################################################
-        ### Read detected basins and parse leg-sites into basins ###
-        ############################################################
-        verbose = False;
-        # Create a dictionary to hold all ODP site paleo locations
-        self.paleoDrillSites = {}
-        
-        # Define ages attribute for class.
-        self.ages = ages 
-
-        # Reconstruct the past location of ODP sites
-        for agei in self.ages:
-            # Reconstruct location of features (ODP sites).
-            reconstructed_features = [];
-            pygplates.reconstruct(self.features, self.rotation_model, reconstructed_features, agei);
-            
-            # Recover the latitude and longitude values for the reconstructed geometries.
-            Rlocation = [Rfeaturei.get_reconstructed_geometry().to_lat_lon_array() for Rfeaturei in reconstructed_features];
-            Rlocation = np.array(Rlocation);
-            Rlocation = Rlocation.reshape(np.shape(Rlocation)[0],2);
-            
-            # Keep track of location at agei.
-            self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)] = Rlocation;
-            
-            program = [ Rfeaturei.get_feature().get_name().split('-')[1] for Rfeaturei in reconstructed_features ];            
-            # legs    = [ re.sub(r'\D', '',Rfeaturei.get_feature().get_name().split('-')[3]) for Rfeaturei in reconstructed_features ];
-            # sites   = [ re.sub(r'\D', '',Rfeaturei.get_feature().get_name().split('-')[5]) for Rfeaturei in reconstructed_features ];
-            legs    = [ Rfeaturei.get_feature().get_name().split('-')[3] for Rfeaturei in reconstructed_features ];
-            sites   = [ Rfeaturei.get_feature().get_name().split('-')[5] for Rfeaturei in reconstructed_features ];
-            program = np.array(program);
-            legs    = np.array(legs);
-            sites   = np.array(sites);
-            self.paleoDrillSites["{:0.0f}Ma-program".format(agei)]  = program;
-            self.paleoDrillSites["{:0.0f}Ma-leg".format(agei)]      = legs;
-            self.paleoDrillSites["{:0.0f}Ma-site".format(agei)]     = sites;
-
-            # Find which Bogumil+24 basin each reconstructed leg-site is in.
-            # Parse Data into Bogumil et al. 2024 basins
-            basinmatPath = os.getcwd()+"/PNAS_Bogumil_Results/basinPolygons"
-            self.parseSites2Bogumil24Basins([agei], basinmatPath)
-            BogumilBasins={'on':True, 'order':self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)]}
-            
-            # Sort drill sites
-            self.mapValues = self.sortDrillSites(self.paleoDrillSites["{:0.0f}Ma-leg".format(agei)],
-                                                 self.paleoDrillSites["{:0.0f}Ma-site".format(agei)],
-                                                 BogumilBasins=BogumilBasins)
-            
-            self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)]          = self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][self.mapValues];
-            self.paleoDrillSites["{:0.0f}Ma-program".format(agei)]      = self.paleoDrillSites["{:0.0f}Ma-program".format(agei)][self.mapValues];
-            self.paleoDrillSites["{:0.0f}Ma-leg".format(agei)]          = self.paleoDrillSites["{:0.0f}Ma-leg".format(agei)][self.mapValues];
-            self.paleoDrillSites["{:0.0f}Ma-site".format(agei)]         = self.paleoDrillSites["{:0.0f}Ma-site".format(agei)][self.mapValues];
-            self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)]   = self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)][self.mapValues];
-
-    
-    def sortDrillSites(self, legs, sites, program={'on':False}, BogumilBasins={'on':False}):
-        """
-        Creates a mapping object for ordering data by either
-        1) leg than site or 2) program, leg, then site, or 3)
-        Bogumil+24 basin, leg, then site.
-        
-        Parameter
-        ---------
-        legs : ndarray (int)
-            legs of DSDP/ODP/IODP drill sites.
-        sites : ndarray (int)
-            sites of DSDP/ODP/IODP drill sites.
-        program : ndarray (str)
-            Option to first order by programs (DSDP/ODP/IODP).
-            The default is {'on':False, 'order':vector}.
-        BogumilBasins : bool
-            Option to first order by Bogumil+24 Basins.
-            The default is {'on':False, 'order':vector}.
-
-        Returns
-        -------
-        mapValues : ndarray
-            array of indecies to map values from original
-            vector to ordered vector
-        """
-        import copy as cp
-        drillSiteID = np.zeros(len(legs))
-        # if program['on']:
-        #     drillSiteID = program['order']*1e10+legs*1e7+sites
-        # elif BogumilBasins['on']:
-        #     drillSiteID = BogumilBasins['order']*1e10+legs*1e7+sites
-        # else:
-        #     drillSiteID = legs*1e7+sites
-        if program['on']:
-            mapValues = np.argsort(program['order'])
-        elif BogumilBasins['on']:
-            mapValues = np.argsort(BogumilBasins['order'])
-        return mapValues
-
-        # Find the map & return it
-        drillSiteIDorder = cp.deepcopy(drillSiteID)
-        drillSiteIDorder.sort()
-        mapValues = np.zeros(len(drillSiteID))
-        for i in range(len(drillSiteIDorder)):
-            mapValues[i] = int(np.argwhere(drillSiteID == drillSiteIDorder[i])[0][0])
-        mapValues = mapValues.astype(int)
-
-        return mapValues
-
-
-    def parseSites2Bogumil24Basins(self, ages, basinmatPath):
-        """
-        This method partitions drill sites into basins defined
-        in Bogumil et al (2024) (https://doi.org/10.1073/pnas.2400232121).
-
-        Assigns class attribute self.DrillSitesbasinIDBogumil24[""], representing
-        the id of each drill site (0) Pacific, (1), Atlantic, and
-        (2) Indian/Tethys.
-
-        Parameters
-        ----------
-        ages : vector
-            Ages, in Ma, to parse drill sites into.
-        basinmatPath : str
-            path to directory holding Earth{}Ma_basin_poly.mat files from
-            Bogumil et al. (2024).
-        """
-        ###################################################################
-        ### Functions for reading Bogumil et al (2024) basin partitions ###
-        ###################################################################
-        import scipy.io
-        def load_netcdf_data(age):
-            # Read bathymetry file.
-            ds = Dataset(os.getcwd()+'/PNAS_Bogumil_Results/bathymetryNCFiles/Bathymetry_{}Ma.nc'.format(age))
-
-            # Assign data to variables
-            lon, lat = np.meshgrid(ds['lon'][:], ds['lat'][:]);
-            z = ds['z'][:].data;
-            continents = ds['z'][:].mask;
-            continentsnew = cp.deepcopy(continents).astype(float)
-            continentsnew[continentsnew==0] = np.nan
-
-            # Close dataset
-            ds.close();
-            
-            # Return variables
-            return lon, lat, z, continentsnew
-
-        def remove_non_unique_rows(arr):
-            # Count occurrences of each row
-            unique_rows, counts = np.unique(arr, axis=0, return_counts=True)
-            # Only keep rows that appear once
-            unique_only = unique_rows[counts == 1]
-            return unique_only
-
-        def readBoundaries(age, basinmatPath, pacificValues=[1,0]):
-            # Load the .mat file
-            mat_data = scipy.io.loadmat(basinmatPath+"/Earth{}Ma_basin_poly.mat".format(age))
-
-            # Print variable names in the file (ignoring MATLAB metadata entries)
-            variable_names = [key for key in mat_data.keys() if not key.startswith('__')]
-            #print("Variables in .mat file:", variable_names);
-
-            # Access a specific variable (replace 'your_variable_name' as needed)
-            boundaries = mat_data['Earth{}Ma'.format(age)][0][0];
-            
-            # Merge two Pacific boundaries
-            if pacificValues is not None:
-                x = np.vstack( (boundaries[pacificValues[0]], boundaries[pacificValues[1]]) )
-                x = remove_non_unique_rows(x)
-                boundariesOut = np.array(np.arange(len(boundaries)-1), dtype=object)
-                boundariesOut[0] = x
-
-                cnt = 0;
-                for i in range(len(boundaries)):
-                    #print(i, (pacificValues[0]==i), (pacificValues[1]==i), ((pacificValues[0]==i) | (pacificValues[1]==i)))
-                    if not ((pacificValues[0]==i) | (pacificValues[1]==i)):
-                        #print(i)
-                        boundariesOut[cnt+1] = boundaries[i]
-                        boundariesOut[cnt+1] = boundaries[i]
-                        cnt+=1;
-            else:
-                boundariesOut = np.array(np.arange(len(boundaries)), dtype=object)
-                for i in range(len(boundaries)):
-                    boundariesOut[i] = boundaries[i]
-                
-            return boundariesOut
-        
-        ##################################################
-        ### Read Bogumil et al (2024) basin partitions ###
-        ##################################################
-        for agei in ages:
-            # Load basin boundaries
-            boundaries = readBoundaries(agei, basinmatPath, None);
-
-            colors = ["k", 'r', 'b']
-            if len(boundaries) == 4:
-                # No tethys Ocean - two polygons make up Pacific ocean
-                basin = [0, 0, 1, 2]
-            else:
-                # Tethys Ocean, two polygons make up Pacific ocean and Indian ocean
-                basin = [0, 0, 1, 2, 2]
-                
-            # Create gplates polygons
-            polygonList = [];
-            for i in range(len(boundaries)):
-                points = []
-                for lonB, latB in zip(boundaries[i][:,0], -1*boundaries[i][:,1]):
-                    if latB > 90:
-                        latB = 90;
-                    if latB < -90:
-                        latB = -90;
-                    if lonB > 180:
-                        lonB = 180;
-                    if lonB < -180:
-                        lonB = -180;
-                    points.append((latB,lonB))
-                polygon = pygplates.PolygonOnSphere(points)
-                polygonList.append(polygon)
-
-            # Check if point lies in one of the polygons
-            idx        = np.arange(len(self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0]));
-            longitudes = self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,1];
-            latitudes  = self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0];
-            basinID    = -1*np.ones(len(idx));
-
-            for idx, lat, lon in zip(idx, latitudes, longitudes):
-                for basini, polygoni in zip(basin, polygonList):
-                    # Create point from Drill Data
-                    DrillDataPt = pygplates.PointOnSphere(lat,lon);
-
-                    # Check if polygoni
-                    if polygoni.is_point_in_polygon(DrillDataPt):
-                        basinID[idx] = basini;
-                        break
-            self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)] = basinID
-
-    def parseSites2Basins(self, gmlFmt, spatialResolution, model,
-                          detectionMethod, edgeWeightMethod, fieldMaskParameter, writeReadmeandPlotsOpts,
-                          plotBoundariesBathymetrySites):
-        """
-        parseSites2Basins finds sites within the same basin
-        throughout the reconstruction period and calculates
-        the correlation between pair-wise sites throughout
-        pair-wise site existence.
-        
-        This method defines the following attributes
-        self.corrNorm, self.norm, self.normPair, self.corrNormPair, self.SiteLegAgeMax
-
-        Parameters
-        ----------
-        gmlFmt : str
-            Generalized path to ExoCcycle graph model
-            of basin networks. For example, 
-            gmlFmt = "../EarthRecon_1deg_{:0.0f}Ma_deep_basinNetwork.gml"
-        spatialResolution : float
-            Spatial resolution, in deg, of 
-        model : str
-            Name of basin model directory, stored in /bathymetries. The
-            folder should contain .gml.
-        detectionMethod : dict
-            Inputs used to find basins and determine .gml files when using
-            BathyRecon.run() method.
-        edgeWeightMethod : dict
-            Inputs used to find basins and determine .gml files when using
-            BathyRecon.run() method.
-        fieldMaskParameter : dict
-            Inputs used to find basins and determine .gml files when using
-            BathyRecon.run() method.
-        writeReadmeandPlotsOpts
-            Inputs used to find basins and determine .gml files when using
-            BathyRecon.run() method.
-        plotBoundariesBathymetrySites : bool
-            Option to plot global maps of bathymetry fields, with overlaying
-            contours of basin boundaries and ODP and IODP sites.
-
-        Returns
-        -------                            print(Sites[idx1[0]], Legs[idx1[0]], BasinIDs[idx1[0]])
-
-        None.        
-        """
-        # Reconstruct the past location of ODP sites
-        for agei in self.ages:
-            print("Parsing sites in basins at {:0.0f} Ma".format(agei));
-
-            # Initiate basins object to read in pre-calculated basins structure
-            # self.basins = BasinsEA(dataDir=os.getcwd()+"/bathymetries/{}".format(model),
-            #                                     filename="{}_{:0.1f}deg_{}Ma.nc".format(model, spatialResolution, agei),
-            #                                     body=model);
-            self.basins = BasinsEA(dataDir=os.getcwd()+"/bathymetries/{}".format(model),
-                                   filename=gmlFmt.replace("_basinNetwork.gml", ".nc").format(agei),
-                                   body=model);
-
-            # Read in pre-calculated basins structure
-            self.basins.defineBasins(detectionMethod    = detectionMethod,
-                                edgeWeightMethod   = edgeWeightMethod,
-                                fieldMaskParameter = fieldMaskParameter,
-                                reducedRes         = {"on":True,"factor":1},
-                                read               = True,
-                                write              = False,
-                                verbose            = False)
-            
-            # # Merge communities based off criteria 
-            # self.basins.applyMergeBasinMethods(mergerID=0, mergerPackage=detectionMethod["mergerPackage"])
-
-            # Interpolate the graph basinIDs to a equal latitude longitude spaced grid.
-            self.basins.interp2regularGrid(mask=True)
-
-            # Plot the model to ensure the basinIDs were read correct and correspond
-            # to the correct pre-calculated boundaries
-            if plotBoundariesBathymetrySites:
-                Ptparameter = {}
-                Ptparameter['s']        = 10*np.ones( len(self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0]) )
-                Ptparameter['marker']   = ["." for i in self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0] ]
-                Ptparameter['marker']   = np.array(Ptparameter['marker'])
-                Ptparameter['marker'][ self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)] == 0 ] = '.'
-                Ptparameter['marker'][ self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)] == 1 ] = '^'
-                Ptparameter['marker'][ self.DrillSitesbasinIDBogumil24["{:0.0f}Ma".format(agei)] == 2 ] = 'X'
-                Ptparameter['color']    = ["r" for i in self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0] ]
-                Ptparameter['color']    = np.array(Ptparameter['color'])
-                Ptparameter['color'][ self.paleoDrillSites["{:0.0f}Ma-program".format(agei)] == "DSDP" ] = 'r'
-                Ptparameter['color'][ self.paleoDrillSites["{:0.0f}Ma-program".format(agei)] == "ODP" ]  = 'k'
-                Ptparameter['color'][ self.paleoDrillSites["{:0.0f}Ma-program".format(agei)] == "IODP" ] = 'y'
-                plotRange = [1000, 6000];
-                N = 1000
-                blues_cm = mpl.colormaps['Blues'].resampled(N)
-                plotHelper.plotGlobalwBoundarieswSites(self.basins.lat, self.basins.lon, self.basins.bathymetry, self.basins.BasinIDA,
-                                    latPt=self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,0],
-                                    lonPt=self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,1],
-                                    valuesPt=self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,1]/self.paleoDrillSites["{:0.0f}Ma-pos".format(agei)][:,1],
-                                    Ptparameter=Ptparameter,
-                                    outputDir = writeReadmeandPlotsOpts["directory"],
-                                    fidName = "plotGlobalwboundarieswSites_{0}_{1:0.0f}Ma.png".format(self.basins.Fields["Field1"]['parameterName'], agei),
-                                    cmapOpts={"cmap":blues_cm,
-                                            "cbar-title":"cbar-title",
-                                            "cbar-range":plotRange},
-                                    pltOpts={"valueType": "{0}".format(self.basins.Fields["Field1"]['parameterName']),
-                                            "valueUnits": "{}".format(self.basins.Fields["Field1"]['parameterUnit']),
-                                            "plotTitle":"",
-                                            "plotZeroContour":False,
-                                            "nanSolidPoly":True,
-                                            "boundaryColor":'k',
-                                            "boundaryLinewidth":1.5,
-                                            "nanSolidPolyOutline":True,
-                                            "plotIntegerContours":True,
-                                            "transparent":True},
-                                    savePNG=True,
-                                    saveSVG=False)
-
-            # Find the basins for the DSDP/ODP/IODP sites 
-            latRDrillSites = self.paleoDrillSites['{:0.0f}Ma-pos'.format(agei)][:,0]
-            lonRDrillSites = self.paleoDrillSites['{:0.0f}Ma-pos'.format(agei)][:,1]
-            self.paleoDrillSites['{:0.0f}Ma-Basin'.format(agei)] = -1*np.ones(len(lonRDrillSites))
-
-            for i in range(len(lonRDrillSites)):
-                # Distance between site and each point within the basins field (map)
-                distance = haversine_distance(self.basins.lonf, self.basins.latf, latRDrillSites[i], lonRDrillSites[i], radius=1)
-                # logical for closest point within basins field (map) - could include nan value if site is not in basin
-                logical  = ( distance == np.nanmin(distance) )
-                # logical for closest point within basins field (map) that is not an nan value
-                for j in range( np.nansum(~np.isnan(self.basins.BasinIDA.flatten()) )):
-                    if np.nansum((distance == np.nanmin(distance)) & ~np.isnan(self.basins.BasinIDA.flatten()) )==0:
-                        # Moves closest point distance to opposite side of earth if the closest point is an nan
-                        distance[distance == np.nanmin(distance)] = np.pi;
-                    else:
-                        # If the closest point is an nan then create logical for picking the closest basin point.
-                        break
-
-                logical  = (distance == np.nanmin(distance)) & ~np.isnan(self.basins.BasinIDA.flatten()) 
-
-                lon      = self.basins.lonf[logical]
-                lat      = self.basins.latf[logical]
-                if len(lat)>1:
-                    lon = lon[0];
-                    lat = lat[0];
-                # if len(lon)==0:
-                #     print( np.nansum((distance == np.nanmin(distance))  ) )
-                #     print( np.nansum((distance == np.nanmin(distance)) & ~np.isnan(self.basins.BasinIDA.flatten()) ) )
-                #     print(lat, lon)
-                self.paleoDrillSites['{:0.0f}Ma-Basin'.format(agei)][i] = self.basins.BasinIDA[(lat==self.basins.lat)&(lon==self.basins.lon)]
-
-                
-        ###############################################
-        ### Create correlation matrix and normalize ###
-        ###############################################
-
-        # I am using the present-day site index as a reference index for the corr matrix
-        # but there appears to be some repreat site values... They should be on different legs though.  
-        self.DrillSitesID = [str(leg)+"-"+str(site) for leg, site in zip(self.paleoDrillSites["{:0.0f}Ma-leg".format(0)], self.paleoDrillSites["{:0.0f}Ma-site".format(0)]) ]
-        self.DrillSitesID = np.array(self.DrillSitesID)
-
-        # Set up the correlation matrix using the total amount of ODP sites (at present-day)
-        corr = np.zeros( (len(self.DrillSitesID), len(self.DrillSitesID)) )
-        corr[:] = np.nan;
-
-        # self.SiteLegAgeMax = np.zeros( (len(self.DrillSitesID), len(self.DrillSitesID)) )
-        self.SiteLegAgeMax = np.zeros( len(self.DrillSitesID) );
-
-        # Reconstruct correlation for DSDP/ODP/IODP sites based on basin detections
-        deltaAge = np.diff(self.ages)[0]
-        for agei in self.ages:
-
-            basinIDWDrillSites = np.unique( self.paleoDrillSites['{:0.0f}Ma-Basin'.format(agei)] )
-
-            # Loop through basinID with ODP data
-            for basinIDWDrillSitesi in basinIDWDrillSites:
-                # Skips no basin areas (nan-values = continent or missing reconstructed ocean floor)
-                if np.isnan(basinIDWDrillSitesi):
-                    continue
-
-                # Create logical to represent paleoDrillSites in basinIDWDrillSitesi at agei.
-                logical = (self.paleoDrillSites['{:0.0f}Ma-Basin'.format(agei)] == basinIDWDrillSitesi)
-
-                # Parse data with logical.
-                BasinIDs = self.paleoDrillSites['{:0.0f}Ma-Basin'.format(agei)][logical]
-                Sites    = self.paleoDrillSites['{:0.0f}Ma-site'.format(agei)][logical]
-                Legs     = self.paleoDrillSites['{:0.0f}Ma-leg'.format(agei)][logical]
-                
-                # Loop over all legs-sites within basinIDbasinIDWDrillSitesiWODPi at agei.
-                for i in range(len(Legs)):
-                    leg1     = Legs[i]
-                    site1    = Sites[i]
-                    basinID1 = BasinIDs[i]  
-                    
-                    # Keep track of age
-                    # self.SiteLegAgeMax[self.DrillSitesID == (str(leg1)+"-"+str(site1))] += deltaAge; 
-                    self.SiteLegAgeMax[self.DrillSitesID == (str(leg1)+"-"+str(site1))] += deltaAge;        
-
-
-                    # Loop over all legs-sites within basinIDWDrillSitesi at agei w/ a greater index than those already evaluated.\
-                    # Skipping values the evaluation of value before i index prevents double counting. 
-                    for j in range(len(Legs[i:])):
-                        leg2     = Legs[i:][j]
-                        site2    = Sites[i:][j]
-                        basinID2 = BasinIDs[i:][j]
-
-                        idx1     = np.argwhere(self.DrillSitesID == (str(leg1)+"-"+str(site1)) )
-                        idx2     = np.argwhere(self.DrillSitesID == (str(leg2)+"-"+str(site2)) )
-                        if (len(idx1[0])>1) | (len(idx2[0])>1):
-                            print("idx1 and idx2 can result in non-unique outputs")
-                            print(idx1, Sites[idx1], Legs[idx1], BasinIDs[idx1])
-                            print(idx2, Sites[idx2], Legs[idx2], BasinIDs[idx2])
-
-                        # Mark ODP correlation (i.e., within the same basin)
-                        # if np.isnan(corr[idx1, idx2]):
-                        if idx1[0][0]<=idx2[0][0]:
-                            if np.isnan(corr[idx1[0][0], idx2[0][0]]):
-                                corr[idx1[0][0], idx2[0][0]]  = 1
-                            else:
-                                corr[idx1[0][0], idx2[0][0]]  += 1
-                        else:
-                            if np.isnan(corr[idx2[0][0],idx1[0][0]]):
-                                corr[idx2[0][0], idx1[0][0]]  = 1
-                            else:
-                                corr[idx2[0][0], idx1[0][0]]  += 1
-
-        # Normalize by the total count of timeslices 
-        self.corrNorm = corr/len(self.ages)
-
-        # Normalize by the oldest of each site pair
-        ## Create age min array
-        age1, age2              = np.meshgrid(self.SiteLegAgeMax, self.SiteLegAgeMax)
-        self.SiteLegAgePairMin  = np.zeros(np.shape(age1))
-
-        for i in range(len(age1)):
-            for j in range(len(age1)):
-                self.SiteLegAgePairMin[i,j] = np.min( [age1[i,j], age2[i,j]] )
-                self.SiteLegAgePairMin[j,i] = np.min( [age1[i,j], age2[i,j]] )
-        ## Normalize
-        self.corrNormPair = corr/(self.SiteLegAgePairMin/deltaAge)
-        
-
-    def load_gplates_rot(self, dir_rot):
-        ''' 
-        load_gplates_rot is a function that loads the GPlates formated rotation
-        model located within dir_rot. Note that this function will read all .rot
-        files located within this directory and merge them into a single tree of
-        rotations.
-        
-        Parameters
-        ----------
-        dir_rot : STRING
-            Directory containing rotation [.rot] files describing Euler pole
-            rotations for some given geometies.
-        
-        
-        Returns
-        -------
-        topology_features : OBJECT
-            pygplates RotationModel object.
-        
-        '''
-        # Find list of rotation files to load
-        dir_fid_rot = []
-        for file in os.listdir(dir_rot):
-            if file.endswith(".rot"):
-                dir_fid_rot.append(os.path.join(dir_rot, file))
-        # Load the Rotations Tree (list of file names are feed into pygplate function)
-        rot = pygplates.RotationModel(dir_fid_rot)
-        
-        # Return rotation object
-        return rot
-
-    def load_gplates_features(self, dir_rot):
-        '''
-        load_gplates_features is a function that loads the GPlates formated
-        rotation model features (plate boundaries) located within dir_rot. Note
-        that this function will read all .gpml files located within this directory
-        and merge them into a pygplates FeatureCollection.
-        
-        
-        Parameters
-        ----------
-        dir_rot : STRING
-            Directory containing topologies [.gpml] files describing, for example,
-            plate boundaries (mid-ocean ridge segments and sub zones).
-
-        Returns
-        -------
-        topology_features : OBJECT
-            pygplates FeatureCollection object.
-        
-        '''
-        # Find list of gplates feature files to load
-        dir_fid_gpml = []
-        for file in os.listdir(dir_rot):
-            if file.endswith(".gpml"):
-                dir_fid_gpml.append(os.path.join(dir_rot, file))
-        # Iterate over and read all gplates feature files.
-        topology_features = [];
-        for input_feature_collection in dir_fid_gpml:
-            topology_features.extend(pygplates.FeatureCollection(input_feature_collection))
-        # Merge topology_features
-        topology_features= pygplates.FeatureCollection(topology_features)
-        
-        # Return object containing all features.
-        return topology_features
-
-    def plotGlobal(lat, lon, values,
-                latPt=None, lonPt=None, valuesPt=None,
-                Ptparameter=None,
-                outputDir = os.getcwd(),
-                fidName = "plotGlobal.png",
-                cmapOpts={"cmap":"viridis",
-                            "cbar-title":"cbar-title",
-                            "cbar-range":[0,1]},
-                pltOpts={"valueType": "Bathymetry",
-                            "valueUnits": "m",
-                            "plotTitle":"",
-                            "plotZeroContour":False,
-                            "plotIntegerContours":False,
-                            "transparent":False},
-                saveSVG=False,
-                savePNG=False):
-        """
-        plotGlobal function is used to plot global ranging datasets that
-        are represented with evenly spaced latitude and longitude values.
-
-        Parameters
-        ----------
-        lat : NUMPY ARRAY
-            nx2n array representing cell registered latitudes, in deg,
-            ranging from [-90, 90]. Latitudes change from row to row.
-        lon : NUMPY ARRAY
-            nx2n array representing cell registered longitudes, in deg,
-            ranging from [-180, 180]. Longitudes change from column to column.
-        Values : NUMPY ARRAY
-            nx2n array representing cell registered geographic data, in [-] units.
-        latPt : NUMPY VECTOR
-            nx2n array representing cell registered latitudes, in deg,
-            ranging from [-90, 90]. Latitudes change from row to row.
-        lonPt : NUMPY VECTOR
-            nx2n array representing cell registered longitudes, in deg,
-            ranging from [-180, 180]. Longitudes change from column to column.
-        ValuesPt : NUMPY VECTOR
-            nx2n array representing cell registered geographic data, in [-] units.
-        cmapOpts : DICTIONARY
-            A set of options to format the color map and bar for the plot
-        pltOpts : DICTIONARY
-            A set of options to format the plot
-        saveSVG : BOOLEAN
-            An option to save an SVG output. The default is False.
-        savePNG : BOOLEAN
-            An option to save an PNG output. The default is False.
-
-        Returns
-        -------
-        None.
-        """
-        # Copy values such that the arguments are not changed, if
-        # say they are from a class attribute.
-        values = cp.deepcopy(values)
-
-        # Start making figure
-        ## Create a figure
-        fig = plt.figure(figsize=(10, 5))
-
-        ## Set up the Mollweide projection
-        ax = plt.axes(projection=ccrs.Mollweide())
-
-        ## Set if the mesh should be plotted
-        try: 
-            pltOpts["mesh"];
-        except:
-            pltOpts["mesh"] = True;
-            
-        ## Set if solid polygons should be plotted for nan values.
-        try:
-            pltOpts["nanSolidPoly"];
-        except:
-            pltOpts["nanSolidPoly"] = False;
-        try:
-            pltOpts["nanSolidPolyOutline"];
-        except:
-            pltOpts["nanSolidPolyOutline"] = False;
-
-        ## Set if the coastline should be plotted
-        try: 
-            pltOpts["coastlines"];
-        except:
-            pltOpts["coastlines"] = False;
-
-        ## Add the plot using pcolormesh
-        if pltOpts["mesh"]:
-            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
-                                vmin=cmapOpts['cbar-range'][0], vmax=cmapOpts['cbar-range'][1],
-                                zorder=0)
-
-        ## Add zero contour value
-        try:
-            if pltOpts["plotZeroContour"]:
-                # Set any np.nan values to 0.ccrs
-                values[np.isnan(values)] = 0;
-                zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
-        except:
-            # Case where pltOpts["plotZeroContour"] was not defined
-            pass
-
-        ## Add solid polygons for nan values
-        try:
-            if pltOpts["nanSolidPoly"]:
-                valuesNan                   = cp.deepcopy(values)
-                valuesNan[:]                = np.nan;
-                valuesNan[np.isnan(values)] = 1;
-                mesh2 = ax.pcolormesh(lon, lat, valuesNan,
-                                    transform=ccrs.PlateCarree(),
-                                    cmap='YlOrRd',
-                                    vmin=0, vmax=3, zorder=1)
-        except:
-            # Case where pltOpts["nanSolidPoly"] was not defined
-            pass
-        
-        ## Add Line around clusters of nan values
-        try:
-            if pltOpts["nanSolidPolyOutline"]:
-                valuesNan                   = cp.deepcopy(values)
-                valuesNan[:]                = 0;
-                valuesNan[np.isnan(values)] = 1;
-                nanContour = ax.contour(lon, lat, valuesNan,
-                                        levels=[1/2],
-                                        colors='blue',
-                                        linewidths=1.1,
-                                        transform=ccrs.PlateCarree(),
-                                        zorder=2)
-        except:
-            # Case where pltOpts["nanSolidPoly"] was not defined
-            pass
-
-        try:
-            valuesContour = cp.deepcopy(values)
-            if pltOpts["plotIntegerContours"]:
-                # Set any np.nan values to 0.
-                for i in range(len(np.unique(values))):
-                    valuesContour[values==i] = 1;
-                    valuesContour[values!=i] = 0;
-                    ax.contour(lon, lat, valuesContour,
-                            levels=[1/2],
-                            colors='black',
-                            linewidths=1,
-                            transform=ccrs.PlateCarree(),
-                            zorder=0)
-        except:
-            # Case where pltOpts["plotIntegerContours"] was not defined
-            pass
-
-        ## Add coastlines
-        if pltOpts["coastlines"]:
-            ax.coastlines(color='blue', linewidth=1, zorder=10)
-
-        ## Add points
-        if (latPt is not None) & (lonPt is not None) & (valuesPt is not None):
-            if Ptparameter is not None:
-                for lonPti, latPti, s, marker, color in zip(lonPt, latPt, Ptparameter['s'], Ptparameter['marker'], Ptparameter['color']):
-                    plt.scatter(lonPti, latPti, s=s, marker=marker, color=color, transform=ccrs.PlateCarree())
-                #plt.scatter(lonPt, latPt, s=Ptparameter['s'], marker=Ptparameter['marker'], color=Ptparameter['color'], transform=ccrs.PlateCarree())
-            else:
-                plt.scatter(lonPt, latPt, transform=ccrs.PlateCarree())
-
-
-        ## Add a colorbar
-        if pltOpts["mesh"]:
-            cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
-            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
-            cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
-
-        ## Add gridlines
-        ax.gridlines()
-
-        ## Set a title
-        plt.title(pltOpts['plotTitle'])
-
-        ## Set transparency value
-        try:
-            pltOpts["transparent"];
-        except:
-            pltOpts["transparent"] = False;
-
-        # Save figure
-        if savePNG:
-            plt.savefig("{}/{}".format(outputDir,fidName), dpi=600, transparent=pltOpts["transparent"])
-        if saveSVG:
-            plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
-
-
-
-
-
 #######################################################################################
 ######################## Helper Functions (Community Detection) #######################
 #######################################################################################
@@ -3534,6 +2683,7 @@ class BasinsEA():
                 print("\tparameterUnit: {}".format(self.Fields[fieldNum]["parameterUnit"]))
                 print("\tparameterName: {}\n".format(self.Fields[fieldNum]["parameterName"]))
 
+
     def useFields(self, fieldList=np.array(["Field1"])):
         """
         useFields method is used to define which fields will be used to
@@ -3597,7 +2747,7 @@ class BasinsEA():
 
         # An option to use an input field array
         # as a mask
-        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", False)
+        fieldMaskParameter['flipud'] = fieldMaskParameter.get("flipud", True)
         fieldMaskParameter['fliplr'] = fieldMaskParameter.get("fliplr", False)
 
         if Field == 'bathymetry':
@@ -3662,6 +2812,8 @@ class BasinsEA():
             else:
                 self.maskValue = cp.deepcopy(self.bathymetry);
             self.maskValue[~np.isnan(self.maskValue)] = 1;
+
+    
 
     def simplifyNetCDF(self,
                        inputPath="path/file1.nc",
@@ -3780,6 +2932,8 @@ class BasinsEA():
         
         return returnDictionary
         
+        
+
     def defineBasins(self,
                      detectionMethod = {"method":"Louvain","resolution":1, "minBasinCnt":40, "minBasinLargerThanSmallMergers":True},
                      edgeWeightMethod = {"method":"useLogistic"},
@@ -4742,6 +3896,7 @@ class BasinsEA():
         
         self.BasinIDA = array;
     
+
     def interp2regularGrid(self,
                            dataIrregular=None,
                            mask=True,
@@ -4778,7 +3933,7 @@ class BasinsEA():
                 # basin assignment to tmpValuesID is done
                 # differently due to how it is stored
                 # in nodes.
-                for i in range(len(tmpValuesID)):
+                for i in tmpValuesID:
                     dataIrregular[i, :] = np.array([
                         tmpValuesPos[i][1],  # lon
                         tmpValuesPos[i][0],  # lat
@@ -4831,14 +3986,9 @@ class BasinsEA():
             grid_data = np.where(np.isnan(self.maskValue), np.nan, grid_data)
 
         if propertyName == "basinID":
-            self.BasinIDA = grid_data
+            self.BasinIDA = np.flipud(grid_data)
         else:
-            return grid_data
-        # FIXME: Old-Code - Check that removal should be done in github repo
-        # if propertyName == "basinID":
-        #     self.BasinIDA = np.flipud(grid_data)
-        # else:
-        #     return np.flipud(grid_data)
+            return np.flipud(grid_data)
 
     def setEdgeParameter(self,
                          netCDF4Path,
@@ -6094,6 +5244,9 @@ class BasinsEA():
         ------------
         self.G's basinID node attribute.
         """
+
+        print("self.AOC", self.AOC)
+
         ##########################
         ### Merge basins Model ###
         ##########################
@@ -6513,6 +5666,7 @@ class BasinsEA():
         ### Write network Model ###
         ###########################
         nx.write_gml(self.G, "{}/{}".format(self.dataDir, self.filename.replace(".nc","_basinNetwork.gml")), stringizer=str)
+
 
     def calculateBasinParameters(self, binEdges=None, fieldNum="Field1", fldName=os.getcwd(), verbose=True):
         """
@@ -6942,6 +6096,7 @@ class BasinsEA():
         if binEdges is None:
             binEdges = np.array([0, 0.1, 0.6, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6.5]);
 
+
         # Set up the Mollweide projection
         fig = plt.figure(figsize=(8, 8))
         gs = GridSpec(2, 1, height_ratios=[1, 1]);  # 2 rows, 1 column, with both row heights equal.
@@ -6959,11 +6114,9 @@ class BasinsEA():
         custom_cmap1 = LinearSegmentedColormap.from_list("custom_pastel", colors1, N=256)
 
         # Create colormap (Connection IDs)
-        cmap2 = cmc.cm.batlowK
-        # cmap2 = plt.get_cmap("Dark2")
+        cmap2 = plt.get_cmap("Dark2")
         ## Extract basinCnt colors from the colormap
-        colors_rgb2 = [cmap2(i*len(cmap2.colors)//self.validConCnt) for i in range(self.validConCnt)]
-        # colors_rgb2 = [cmap2(i) for i in range(self.validConCnt)]
+        colors_rgb2 = [cmap2(i) for i in range(self.validConCnt)]
         ## Convert RGB to hex
         colors2 = ['#%02x%02x%02x' % (int(r*255), int(g*255), int(b*255)) for r, g, b, _ in colors_rgb2]
         ## Create a custom colormap from the list of colors
@@ -7883,7 +7036,7 @@ class GLORYS12V1_QT:
     This helper class prepares GLORYS12V1 ocean reanalysis fields for use in
     ExoCcycle-style workflows. It can (optionally) download monthly NetCDF
     tiles, simplify them to lon/lat/``z`` variables, and produce a **quantile-
-    transformed**, layer-thickness-weighted vertical average over a user-given
+    transformed**, layer-thickness–weighted vertical average over a user-given
     depth interval. It can also average multiple monthly files with GMT.
 
     Parameters
@@ -8065,7 +7218,7 @@ class GLORYS12V1_QT:
         Write a compact NetCDF with lon/lat and a single 2-D field ``z``.
 
         If the source variable has a depth dimension, compute a **quantile-
-        transformed**, layer-thickness-weighted average over
+        transformed**, layer-thickness–weighted average over
         ``options['depthAve']``. If it does **not** have a depth dimension,
         copy the 2-D field as-is into ``z``.
 
@@ -8202,6 +7355,46 @@ class GLORYS12V1_QT:
         # Read the netCDF file
         return Dataset(readFile, "r")
 
+    '''
+    The GLORYS12V1 class is used to download GLORYS12V1
+    data and format it to be used with the ExoCcycle model.
+
+    '''
+
+    def __init__(self, options = {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1", "year":[1994], "data": "bottomT", "depthAve":[0,100]}):
+        """
+        Initialization of GLORYS12V1
+        
+        
+        Parameters
+        -----------
+        options : DICTIONARY
+            download : BOOLEAN
+            dataDir : STRING
+            year : LIST
+            data : STRING
+                Data to be averaged
+                    'bottomT' : sea_water_potential_temperature_at_sea_floor
+                    'thetao' : sea_water_potential_temperature [depth dimension]
+                    'so' : sea_water_salinity [depth dimension]
+            depthAve : LIST
+                2 element list, describing the range over which an output
+                value should be averaged. Note that averaging is only used
+                if the input variable has a depth dimension.
+            The default is {"download": False, "dataDir":os.getcwd()+"/GLORYS12V1",
+            "year":[1994], "data": "thetao", "depthAve":[0,100]}.
+        """
+
+        # Assign options to object
+        self.options = options;
+
+        # Assign general name of netCDF file
+        self.options["netCDFGeneral"] = "mercatorglorys12v1_gl12_mean_YEARMONTH.nc";
+    
+        # Define initial attributes
+        self.areaWeightsA = None;
+
+
 
     def download(self):
         """
@@ -8209,11 +7402,213 @@ class GLORYS12V1_QT:
         data (netCDFs) and store them in a data directory
         accessed by the ExoCcycle library.
         """
+        FIXME
 
-        print("Working progress")
+
+    def averageModels(self):
+        """
+        averageModels is used to make an averaged netCDF model
+        given all netCDFs stored in the data directory.  
+        """
+
+        # Create list of netCDFs to average
+        self.ListOfNetCDFs = [];
+        for i in range(len(self.options['year'])):
+            for month in range(12):
+                readFile = self.options["netCDFGeneral"].replace("YEAR", str(self.options['year'][i])).replace("MONTH", "{}".format(month+1).zfill(2))
+                self.ListOfNetCDFs.append(readFile)
         
+        # Iterate through all netCDF4 files, copying only the used variables
+        self.ListOfSimpNetCDFs = [];
+        for i in range(len(self.ListOfNetCDFs)):
+            self.simplifyNetCDF(
+                inputPath=self.options["dataDir"]+"/"+self.ListOfNetCDFs[i],
+                outputPath=self.options["dataDir"]+"/file{}.nc".format(i),
+                variableList=['longitude', 'latitude', self.options['data']]
+            )
+            self.ListOfSimpNetCDFs.append(self.options["dataDir"]+"/file{}.nc".format(i))
+
+        # Create a gmt command and use to gmt to average all netCDF4s.
+        ## Create list of files to add
+        SimpNetCDFs = " ".join(self.ListOfSimpNetCDFs)
+        ## Create list of adds
+        adds=[];
+        for i in range(len(self.ListOfSimpNetCDFs)-1):
+            adds.append("ADD")
+        adds = " ".join(adds);
+        ## Define the command
+        outputFileName = "{0}_average_{1}_{2}m_QTAveraged.nc".format(self.options["dataDir"]+"/"+self.options['data'], self.options['depthAve'][0], self.options['depthAve'][1])
+        GMTcommand = "gmt grdmath {0} {1} {2} DIV = {3}".format(SimpNetCDFs, adds, len(self.ListOfSimpNetCDFs), outputFileName)
+        ## Use the command
+        os.system(GMTcommand)
+        ## Apply a mask to the averaged grid (FIXME: No longer need)
+        #os.system("gmt grdmath {0} {1} OR = {1}".format(self.options["dataDir"]+"/"+self.ListOfSimpNetCDFs[0], outputFileName)
+        
+    def makeAreaWeightGrid(self, step, latRange, lonRange):
+        areaWeightsA, longitudes, latitudes, totalArea, totalAreaCalculated = areaWeights(resolution = step,
+                                                                                          radius = 1,
+                                                                                          LonStEd = [lonRange[0]-step/2,lonRange[1]+step/2],
+                                                                                          LatStEd = [latRange[0]-step/2,latRange[1]+step/2])
+        self.areaWeights = areaWeightsA
+        self.longitudes = longitudes
+        self.latitudes = latitudes
+        self.totalArea = totalArea
+        self.totalAreaCalculated = totalAreaCalculated
+
+    def simplifyNetCDF(self, inputPath="path/file.nc", outputPath="~/file2.nc",
+    variableList=['longitude', 'latitude', 'variable']):
+        """
+        simplifyNetCDF method reads a NetCDF4 file and writes a new NetCDF4 file
+        with only lat, lon, and 'variable' variables.
+
+        Parameters
+        -----------
+        input_path : STRING
+            Path to the input NetCDF4 file.
+        output_path : STRING
+            Path to save the new NetCDF4 file.
+        variableList : LIST OF STRINGS
+            3 length list of strings that correspond to an
+            x (longitude), y (latitude), and z (e.g., bathymetry)
+            variable. The default is ['latitude', 'logitude',
+            'variable'].
+        """
+        from sklearn.preprocessing import QuantileTransformer
+        
+        # Expand the user path (~) to an absolute path
+        outputPath = os.path.expanduser(outputPath)
+
+        # Open the original NetCDF file (file1.nc) in read mode
+        with Dataset(inputPath, 'r') as src:
+            # Define area weights if not already defined
+            if self.areaWeightsA is None:
+                # Defines: self.areaWeights, self.longitudes, self.latitudes, self.totalArea, self.totalAreaCalculated
+                self.makeAreaWeightGrid(step      = src['latitude'].step,
+                                        latRange  = [src['latitude'].valid_min, src['latitude'].valid_max],
+                                        lonRange  = [src['longitude'].valid_min, src['longitude'].valid_max])
+
+            # Create a new NetCDF file (file2.nc) in write mode
+            with Dataset(outputPath, 'w', format="NETCDF4_CLASSIC") as dst:
+                # Copy global attributes
+                if "title" in src.ncattrs():
+                    dst.title = src.title  # Preserve title attribute
+
+                # Copy lat & lon dimensions
+                for dim_name in [variableList[0], variableList[1]]:
+                    if dim_name in src.dimensions:
+                        dst.createDimension(dim_name, len(src.dimensions[dim_name]))
+
+                # Copy lat & lon variables
+                # for var_name in [variableList[0], variableList[1]]:
+                #     if var_name in src.variables:
+                #         var = src.variables[var_name]
+                #         dst_var = dst.createVariable(var_name, np.float32, var.dimensions)
+                #         dst_var[:] = var[:]  # Copy data
+                #         # Copy attributes
+                #         for attr in var.ncattrs():
+                #             try:
+                #                 dst_var.setncatts({attr: var.getncattr(attr)})
+                #             except:
+                #                 pass
+                if variableList[0] in src.variables:
+                    lat = src.variables[variableList[0]]
+                    lat_dst_var = dst.createVariable(variableList[0], np.float32, lat.dimensions)
+                    lat_dst_var[:] = lat[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lat.ncattrs():
+                    #     try:
+                    #         lat_dst_var.setncatts({attr: lat.getncattr(attr)})
+                    #     except:
+                    #         pass
+                if variableList[1] in src.variables:
+                    lon = src.variables[variableList[1]]
+                    lon_dst_var = dst.createVariable(variableList[1], np.float32, lon.dimensions)
+                    lon_dst_var[:] = lon[:]  # Copy data
+                    # Copy attributes
+                    # for attr in lon.ncattrs():
+                    #     try:
+                    #         lon_dst_var.setncatts({attr: lon.getncattr(attr)})
+                    #     except:
+                    #         pass
 
 
+                # Copy variable and rename it to 'z'
+                if variableList[2] in src.variables:
+                    z_var = src.variables[variableList[2]]
+                    dst_z = dst.createVariable("z", np.float32, (z_var.dimensions[-2],z_var.dimensions[-1]))
+                    if len(z_var.dimensions) == 3:
+                        # Copy data
+                        dst_z[:] = z_var[:]
+                    else:
+                        # Define depth variable and logical defining
+                        # depth range to average over
+                        depth = src.variables['depth'][:];
+                        layerThickness = np.diff( np.append(0, depth) )
+                        depthLogical = (depth>self.options['depthAve'][0])&(depth<self.options['depthAve'][1])
+
+                        # Define array to hold sum of layered values
+                        # (Assumes top/first layer contains all possible values as non-nan)
+                        LayerIdx = np.argwhere(depthLogical.data).T
+                        if np.size(LayerIdx) > 1:
+                            LayerIdx = LayerIdx[0]
+                            topLayerIdx = np.argwhere(depthLogical.data)[0][0];
+                        else:
+                            topLayerIdx = np.argwhere(depthLogical.data)[0];
+                        sum = z_var[:][0][topLayerIdx].data*0
+                        intervals = z_var[:][0][topLayerIdx].data*0
+                        layerThickness = layerThickness[depthLogical]
+                        dataLayers = z_var[:][0][depthLogical]
+
+                        # Loop over depth intervals
+                        for i in range(len(layerThickness)):
+                            # Assign working layer
+                            dataLayer = dataLayers[i]
+                            # print(dataLayer)
+                            # print(dataLayer.data)
+                            # print(dataLayer.mask)
+                            # print( np.reshape(dataLayer.data[~dataLayer.mask], (np.size(dataLayer.data[~dataLayer.mask]), 1)) )
+                            # print("i, layerThickness", i, layerThickness)
+
+                            # Check if field is empty. This might be the case for the deepest layer
+                            if np.size(dataLayer.data[~dataLayer.mask]) == 0:
+                                continue
+
+                            # Apply an area weighted quantile transformation to layer
+                            qt = QuantileTransformer(n_quantiles=1000,
+                                                     random_state=0,
+                                                     output_distribution='normal')
+
+                            qt.fit_transform( np.reshape(dataLayer.data[~dataLayer.mask], (np.size(dataLayer.data[~dataLayer.mask]), 1)) )    
+                            dataLayerTransformed = qt.transform(np.reshape( dataLayer.data, (np.size(dataLayer.data),1) ) )
+                            dataLayerTransformed = np.reshape( dataLayerTransformed, np.shape(dataLayer.data) )
+
+                            # Add quantile transformed data to running sum
+                            sum[~dataLayer.mask]       += dataLayerTransformed[ ~dataLayer.mask ]*layerThickness[i];
+                            intervals[~dataLayer.mask] += layerThickness[i]
+
+                        # Copy top layer and replace .data with averaged values 
+                        # average = cp.deepcopy( z_var[:][0][topLayerIdx] )
+                        # average.data[:] = (sum/intervals)
+                        # dst_z[:] = average.data
+                        dst_z[:] = sum/intervals
+
+                    # Copy attributes
+                    # for attr in z_var.ncattrs():
+                    #     if attr != "_FillValue":
+                    #         try:
+                    #             #print("attr",attr)
+                    #             dst_z.setncatts({attr: z_var.getncattr(attr)})
+                    #         except:
+                    #             pass
+
+
+    def readnetCDF(self, year, month):
+        # Define the file name for year and month
+        
+        readFile = self.options["dataDir"]+"/"+self.options["netCDFGeneral"].replace("YEAR", str(year)).replace("MONTH", "{}".format(month).zfill(2))
+
+        # Read the netCDF file
+        return Dataset(readFile, "r");
 
 class GLORYS12V1:
     """
@@ -8269,7 +7664,7 @@ class GLORYS12V1:
       available on ``PATH``.
     """
 
-    def __init__(self, options={"download": {"download":False}, "dataDir": os.getcwd()+"/GLORYS12V1",
+    def __init__(self, options={"download": False, "dataDir": os.getcwd()+"/GLORYS12V1",
                                  "year": [1994], "data": "bottomT", "depthAve": [0, 100]}):
         """
         Initialize the GLORYS12V1 workflow helper.
@@ -8296,11 +7691,8 @@ class GLORYS12V1:
                                   out_dir=self.options["download"]["out_dir"]
                                   )
 
-
-
         # Assign general name of netCDF file
         self.options["netCDFGeneral"] = "mercatorglorys12v1_gl12_mean_YEARMONTH.nc"
-
 
     def download(self,
                  year,
@@ -8331,6 +7723,13 @@ class GLORYS12V1:
         password : str
             Copernicus Marine Service password.
         out_dir : str
+            Output directory, must be within cwd.
+        out_filename : str
+            The standardized name for the output file. The default of
+            None will result in f"mercatorglorys12v1_gl12_mean_{year:04d}{month:02d}.nc".
+        variables : str
+            The variable names within the dataset retain
+            within the netCDF4.
             
         Returns
         -------
@@ -8364,7 +7763,6 @@ class GLORYS12V1:
             netcdf_compression_level=1
         )
         #return str(Path(out_dir) / out_filename)
-        
 
     def averageModels(self):
         """

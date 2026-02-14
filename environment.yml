@@ -1,11 +1,12 @@
-name: exoccycle-dev
+name: exoccycle-GMD
 channels:
   - conda-forge
   - nodefaults
 
 dependencies:
   # ---- Core Python ----
-  - python=3.11
+  - python=3.10
+  - setuptools==70.3.0
   - jupyter
   - ipykernel
   - nb_conda_kernels
@@ -26,6 +27,7 @@ dependencies:
   # ---- Plotting / Viz ----
   - matplotlib
   - plotly
+  - cmcrameri>=1.9
 
   # ---- Geospatial stack (needed by Cartopy) ----
   - cartopy
@@ -34,6 +36,7 @@ dependencies:
   - proj-data
   - geos
   - pyproj
+  - pygplates
 
   # ---- Graph / Community detection ----
   - networkx
@@ -44,7 +47,7 @@ dependencies:
 
   # ---- GMT + wrapper (PyGMT pulls GMT runtime libs too) ----
   - gmt>=6.2,<7
-  - pygmt>=0.17
+  - pygmt<0.17
 
   # ---- Sphinx docs toolchain (optional but handy here) ----
   - sphinx>=7
@@ -55,3 +58,5 @@ dependencies:
 
   # ---- Misc runtime niceties ----
   - pip
+  - pip:
+      - copernicusmarine>=2.0
