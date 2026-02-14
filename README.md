@@ -9,7 +9,7 @@ There is jupyter notebook within the JN folder. After dowloading/cloning this re
 Procedure (installation + GMD figure recreation):
 1. Download the repo.
 ```
-$ git clone https://github.com/Bogumil-Matthew/ExoCcycle.git
+$ git clone --branch GMD-release https://github.com/Bogumil-Matthew/ExoCcycle.git:
 ```
 
 2. Navigate to the ExoCcycle folder (folder containing environment.yml file).
