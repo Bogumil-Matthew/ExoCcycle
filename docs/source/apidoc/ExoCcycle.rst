@@ -12,6 +12,22 @@ ExoCcycle.Bathymetry module
    :undoc-members:
    :show-inheritance:
 
+ExoCcycle.CcycleAnalysis module
+-------------------------------
+
+.. automodule:: ExoCcycle.CcycleAnalysis
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+ExoCcycle.functionClassBuilding module
+--------------------------------------
+
+.. automodule:: ExoCcycle.functionClassBuilding
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 ExoCcycle.plotHelper module
 ---------------------------
 

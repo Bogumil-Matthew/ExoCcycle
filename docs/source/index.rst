@@ -1,5 +1,5 @@
 .. ExoCcycle documentation master file, created by
-   sphinx-quickstart on Thu Nov  6 21:17:59 2025.
+   sphinx-quickstart on Mon Feb 16 13:54:47 2026.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
@@ -12,8 +12,7 @@ documentation for details.
 
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
    :caption: Contents:
 
    apidoc/modules
-

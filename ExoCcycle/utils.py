@@ -7043,8 +7043,8 @@ class GLORYS12V1_QT:
     ----------
     options : dict, optional
         Configuration dictionary. Recognized keys:
-        - ``"download"`` (bool): If ``True``, :meth:`download` should be called
-          to retrieve the monthly NetCDFs. Default ``False``.
+        - ``download`` : bool
+            If ``True``, :meth:`download` should be used to retrieve the data.
         - ``"dataDir"`` (str): Directory containing/receiving GLORYS files.
           Default ``os.getcwd() + "/GLORYS12V1"``.
         - ``"year"`` (list[int]): Years to process (e.g., ``[1994]``).
@@ -7083,7 +7083,7 @@ class GLORYS12V1_QT:
       monthly simplified grids. GMT must be available on ``PATH``.
     """
 
-    def __init__(self, options={"download": False, "dataDir": os.getcwd()+"/GLORYS12V1",
+    def __init__(self, options={"download": {"download":False}, "dataDir": os.getcwd()+"/GLORYS12V1",
                                 "year": [1994], "data": "bottomT", "depthAve": [0, 100]}):
         """
         Initialize the GLORYS12V1_QT helper.
@@ -7100,11 +7100,91 @@ class GLORYS12V1_QT:
         # Assign options to object
         self.options = options
 
+
+        # Download model from Copernicus
+        if self.options["download"]["download"]:
+            for yr in self.options["year"]:
+                for month in range(12):
+                    self.download(yr, month+1,
+                                  username=self.options["download"]["username"],
+                                  password=self.options["download"]["password"],
+                                  out_dir=self.options["download"]["out_dir"]
+                                  )
+                    
         # Assign general name of netCDF file
         self.options["netCDFGeneral"] = "mercatorglorys12v1_gl12_mean_YEARMONTH.nc"
 
         # Define initial attributes
         self.areaWeightsA = None
+
+    def download(self,
+                 year,
+                 month,
+                 username,
+                 password,
+                 out_dir = "GLORYS12V1",
+                 dataset_id = "cmems_mod_glo_phy_my_0.083deg_P1M-m",
+                 out_filename: str | None = None,
+                 variables: list[str] = ["mlotst","zos","bottomT","sithick","siconc",
+                                         "usi","vsi","thetao","so","uo","vo"]):
+        """
+        Download method is used to download the GLORYS12V1
+        data (netCDFs) and store them in a data directory
+        accessed by the ExoCcycle library.
+
+        
+        Initialize the GLORYS12V1 workflow helper.
+
+        Parameters
+        ----------
+        year : int
+            Year covered by dataset.
+        month : int
+            Month covered by dataset.
+        username : str
+            Copernicus Marine Service username.
+        password : str
+            Copernicus Marine Service password.
+        out_dir : str
+            Output directory, must be within cwd.
+        out_filename : str
+            The standardized name for the output file. The default of
+            None will result in f"mercatorglorys12v1_gl12_mean_{year:04d}{month:02d}.nc".
+        variables : str
+            The variable names within the dataset retain
+            within the netCDF4.
+
+        Returns
+        -------
+        None
+        """
+        from pathlib import Path
+        import calendar
+        import copernicusmarine
+
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        if out_filename is None:
+            out_filename = f"mercatorglorys12v1_gl12_mean_{year:04d}{month:02d}.nc"
+
+        last_day = calendar.monthrange(year, month)[1]
+        start = f"{year:04d}-{month:02d}-01T00:00:00"
+        end   = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59"
+
+        copernicusmarine.subset(
+            dataset_id=dataset_id,
+            variables=variables,  # None => toolbox decides default behavior; usually you should specify
+            minimum_longitude=-180,
+            maximum_longitude=180,
+            minimum_latitude=-90,
+            maximum_latitude=90,
+            start_datetime=start,
+            end_datetime=end,
+            output_directory=out_dir,
+            output_filename=out_filename,
+            username=username,
+            password=password,
+            netcdf_compression_level=1
+        )
 
     def averageModels(self):
         """
@@ -7664,7 +7744,7 @@ class GLORYS12V1:
       available on ``PATH``.
     """
 
-    def __init__(self, options={"download": False, "dataDir": os.getcwd()+"/GLORYS12V1",
+    def __init__(self, options={"download": {"download":False}, "dataDir": os.getcwd()+"/GLORYS12V1",
                                  "year": [1994], "data": "bottomT", "depthAve": [0, 100]}):
         """
         Initialize the GLORYS12V1 workflow helper.
@@ -7762,7 +7842,6 @@ class GLORYS12V1:
             password=password,
             netcdf_compression_level=1
         )
-        #return str(Path(out_dir) / out_filename)
 
     def averageModels(self):
         """
