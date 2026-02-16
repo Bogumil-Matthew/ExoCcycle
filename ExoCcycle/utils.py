@@ -3979,7 +3979,7 @@ class BasinsEA():
         nc = Dataset("temp_grid.nc", "r")
         grid_var = list(nc.variables.keys())[-1]
         grid_data = np.flipud(nc.variables[grid_var][:]) # if .nc have rows decrease in latitude.
-        #grid_data = nc.variables[grid_var][:] # if .nc have rows increase in latitude.
+        # grid_data = nc.variables[grid_var][:] # if .nc have rows increase in latitude.
         nc.close()
 
         if mask:
@@ -7730,7 +7730,7 @@ class GLORYS12V1:
         variables : str
             The variable names within the dataset retain
             within the netCDF4.
-            
+
         Returns
         -------
         None

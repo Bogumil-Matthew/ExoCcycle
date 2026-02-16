@@ -25,6 +25,7 @@ dependencies = [
   # IO / grids
   "netCDF4>=1.6",
   "cftime>=1.6",
+  "h5py>=3.10",
   
   # Copernicus Marine Toolbox
   "copernicusmarine>=2.0",

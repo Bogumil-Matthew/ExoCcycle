@@ -520,6 +520,7 @@ class BathyMeasured():
             # Close the netcdf
             ncfile.close(); 
              
+
     def setSeaLevel(self,
                     basinVolume={"on": True, "uncompactedVol": None},
                     oceanArea={"on": True, "area": 0.7},
@@ -633,7 +634,7 @@ class BathyMeasured():
                 AOC = np.sum(np.sum( areaWeights[bathymetry<0] ))
                 # Calculate ocean area, in decimal percent.
                 calculatedOceanAreaDPercent = AOC / np.sum(np.sum( areaWeights ));
-        
+
             # Set topography in bathymetry variable to np.nan.
             bathymetry[bathymetry>=0] = np.nan;
 
@@ -754,14 +755,15 @@ class BathyMeasured():
 
         # Feed bathymetry initial model into selected bathymetry calculation function. 
         if methodChoice == "basin volume constraint":
-            bathymetry = waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose = False)
+            bathymetry = waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose = True)
         elif methodChoice == "basin area constraint":
-            bathymetry = oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose = False)
+            bathymetry = oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose = True)
 
         # Calculate and define properties of bathymetry model
         self.bathymetry = bathymetry;
         self.AOC = np.nansum(np.nansum( areaWeights[~np.isnan(self.bathymetry)] ))
         self.VOC = np.sum(np.sum( (bathymetry*areaWeights)[~np.isnan(self.bathymetry)] ))
+
         
         ## Sets self.highlatA and self.highlatlat
         self.highlatlat, self.highlatA = calculateHighLatA(self.bathymetry, self.lat, areaWeights, self.highlatP, verbose=False);
