@@ -5752,7 +5752,8 @@ class BasinsEA():
             BasinID[i] = nodeBasinID[i]['basinID'];
         
         # Define basinID and nodeid array
-        self.interp2regularGrid(mask=True);
+        # self.interp2regularGrid(mask=True);
+        self.interp2regularGrid(mask=False);
         #BasinIDA = np.empty(np.shape(lonA));
         #BasinIDA[:] = np.nan;
         #for nodei in range(len(pos[:,1])):

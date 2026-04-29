@@ -589,6 +589,314 @@ def plotGlobalwBoundaries(
     if saveSVG:
         plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
 
+def plotGlobalwBoundarieswSites(
+    lat,
+    lon,
+    values,
+    BasinIDA,
+    latPt=None, lonPt=None, valuesPt=None,
+    Ptparameter=None,
+    outputDir="",
+    fidName="plotGlobal_wBoundaries.png",
+    cmapOpts={"cmap": "jet",
+              "cbar-title": "cbar-title",
+              "cbar-range": [0, 1]},
+    pltOpts={"valueType": "Silhouette Structure",
+             "valueUnits": "-",
+             "plotTitle": "",
+             "plotZeroContour": False,
+             "nanSolidPoly": True,
+             "nanSolidPolyOutline": True,
+             "plotIntegerContours": True,
+             "regionalZBoundaries": False,
+             "region": [-180, 180, -90, 90],
+             "projection": ccrs.Mollweide(),
+             "transparent": True},
+    saveSVG=False,
+    savePNG=False,
+):
+    """
+    Plot a global (or regional) scalar field with overlaid basin boundaries.
+
+    Renders a gridded field (``values``) on a Cartopy map projection with optional
+    masking to a region, solid polygons/contours to visualize NaN areas, and
+    integer-boundary contours derived from a basin-ID array (``BasinIDA``). A
+    horizontal colorbar is added when mesh shading is enabled. PNG and SVG export
+    are supported.
+
+    Args:
+        lat (numpy.ndarray):  
+            2-D array of **cell-centered** latitudes (degrees), same shape as ``values``.
+        lon (numpy.ndarray):  
+            2-D array of **cell-centered** longitudes (degrees), same shape as ``values``.
+        values (numpy.ndarray):  
+            2-D array of scalar data to shade (same shape as ``lat``/``lon``). May include ``NaN``.
+        BasinIDA (numpy.ndarray):  
+            2-D array of integer (or categorical) basin IDs aligned with ``values`` for
+            boundary visualization (integer-step contouring and NaN overlays).
+        latPt (numpy.ndarray):
+            nx2n array representing cell registered latitudes, in deg,
+            ranging from [-90, 90]. Latitudes change from row to row.
+        lonPt (numpy.ndarray):
+            nx2n array representing cell registered longitudes, in deg,
+            ranging from [-180, 180]. Longitudes change from column to column.
+        ValuesPt (numpy.ndarray):
+            nx2n array representing cell registered geographic data, in [-] units.
+        Ptparameter (dict, optional):
+            Holds plt.scatterplot() values for 's', 'marker', and 'color'
+            correspond to latPt and lonPt.
+        outputDir (str, optional):  
+            Directory to which the figure is saved. Defaults to ``""`` (current behavior
+            depends on Matplotlib’s savefig path).
+        fidName (str, optional):  
+            Output filename for PNG; used as base to derive SVG name. Defaults to
+            ``"plotGlobal_wBoundaries.png"``.
+        cmapOpts (dict, optional):  
+            Colormap and colorbar configuration. Recognized keys:
+            - ``"cmap"`` (str): Colormap name (resolved via ``plt.cm.get_cmap``).  
+            - ``"cbar-title"`` (str): Title for the colorbar (not always used).  
+            - ``"cbar-range"`` (list[float, float]): ``[vmin, vmax]``.
+        pltOpts (dict, optional):  
+            Plot behavior and aesthetics. Recognized keys:
+            - ``"valueType"`` (str): Label for data type (used in colorbar label).  
+            - ``"valueUnits"`` (str): Units string for colorbar label.  
+            - ``"plotTitle"`` (str): Figure title text.  
+            - ``"plotZeroContour"`` (bool): If True, contour a zero isoline of ``values``.  
+            - ``"nanSolidPoly"`` (bool): If True, shade NaN regions (from ``BasinIDA``) as solid polygons.  
+            - ``"nanSolidPolyOutline"`` (bool): If True, outline contiguous NaN regions (from ``BasinIDA``).  
+            - ``"plotIntegerContours"`` (bool): If True, draw boundaries for each integer basin ID.  
+            - ``"regionalZBoundaries"`` (bool): If True, mask ``values`` outside ``region`` and remap
+              surviving unique values to 0..N-1; updates ``cmapOpts["cbar-range"]``.  
+            - ``"region"`` (list[float, float, float, float]): ``[lon_min, lon_max, lat_min, lat_max]`` extent.  
+            - ``"projection"`` (cartopy.crs.Projection): Target map projection (default Mollweide).  
+            - ``"transparent"`` (bool): If True, save with transparent background.  
+            - ``"boundaryColor"`` (str, optional): Color for integer boundary contours (default ``'k'``).  
+            - ``"boundaryLinewidth"`` (float, optional): Line width for boundary contours (default ``1``).  
+            - ``"mesh"`` (bool, optional): If True, render the shaded mesh (default True).
+        saveSVG (bool, optional):  
+            If True, also save an SVG (name derived from ``fidName``). Defaults to False.
+        savePNG (bool, optional):  
+            If True, save a PNG using ``fidName``. Defaults to False.
+
+    Returns:
+        None:  
+            Writes a figure to disk when ``savePNG`` and/or ``saveSVG`` is True.
+
+    Raises:
+        ValueError:  
+            If input array shapes are inconsistent. *(Not validated here; caller responsibility.)*
+        FileNotFoundError:  
+            If ``outputDir`` is invalid/unwritable. *(Depends on Matplotlib/OS behavior.)*
+        Exception:  
+            Any Matplotlib/Cartopy errors encountered during plotting or saving.
+
+    Notes:
+        - ``regionalZBoundaries``: values outside the extent are set to ``NaN``; remaining unique
+          values are renumbered sequentially starting at 0 to create a compact categorical range.  
+        - Integer boundary contours are derived from ``BasinIDA`` by thresholding each ID and
+          contouring at 0.5.  
+        - NaN overlays/contours are also computed from ``BasinIDA``’s NaN mask (not ``values``)
+          to highlight missing/invalid basins.  
+        - Colormap is resolved via ``plt.cm.get_cmap(cmapOpts["cmap"])``.  
+        - Gridlines are labeled for regional plots and hidden for full-globe plots.  
+        - ``pcolormesh`` uses ``transform=ccrs.PlateCarree()`` to project lon/lat to the target projection.
+
+    Example:
+        Plot silhouette values with basin boundaries and save a transparent PNG:
+
+        ```python
+        pltOpts = {
+            "valueType": "Silhouette",
+            "valueUnits": "-",
+            "plotTitle": "Basins & Silhouette",
+            "projection": ccrs.Mollweide(),
+            "region": [-180, 180, -90, 90],
+            "plotIntegerContours": True,
+            "transparent": True
+        }
+        cmapOpts = {"cmap": "viridis", "cbar-range": [0, 1]}
+        plotGlobalwBoundaries(lat, lon, silhouette, basin_ids,
+                              outputDir="figs",
+                              fidName="silhouette_basins.png",
+                              cmapOpts=cmapOpts, pltOpts=pltOpts,
+                              savePNG=True)
+        ```
+    """
+    # Copy values such that the arguments are not changed, if
+    # say they are from a class attribute.
+    values = cp.deepcopy(values)
+
+    # Start making figure
+    ## Create a figure
+    fig = plt.figure(figsize=(10, 5))
+    
+    ## Set projection and extent
+    projection = pltOpts.get("projection", ccrs.Mollweide())
+    region = pltOpts.get('region', [-180, 180, -90, 90])
+
+    ## Set up the Mollweide projection
+    ax = plt.axes(projection=projection)
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        pass
+    else:
+        ax.set_extent(region, crs=ccrs.PlateCarree())
+    
+    ## Set default for option to use regional Zvalue boundaries
+    regionalZBoundaries = pltOpts.get('regionalZBoundaries', False)
+    
+    if regionalZBoundaries:
+        # Set values outside of region to nan
+        values[ ~((lon>=pltOpts["region"][0])&(lon<=pltOpts["region"][1])&(lat>=pltOpts["region"][2])&(lat<=pltOpts["region"][3]))] = np.nan
+        # Reset indexing
+        cnt = 0;
+        for idx in np.unique(values):
+            if idx != np.nan:
+                values[values==idx] = cnt
+                cnt+=1;
+        
+        cmapOpts["cbar-range"] = [0,np.nanmax(values)]
+        
+    ## Set if the mesh should be plotted
+    meshOpt = pltOpts.get('mesh', True)
+        
+    ## Set if solid polygons should be plotted for nan values.
+    nanSolidPoly        = pltOpts.get("nanSolidPoly", False)
+    nanSolidPolyOutline = pltOpts.get("nanSolidPolyOutline", False)
+
+    ## Set if the coastline should be plotted
+    coastlinesOpt = pltOpts.get("coastlines", False);
+
+    ## Set option to add contour for zero value
+    plotZeroContour = pltOpts.get("plotZeroContour", False);
+    
+    ## Set default option for plotIntegerContours
+    plotIntegerContours = pltOpts.get("plotIntegerContours", False);
+    
+    ## Get cmap at 'cbar-intervals'
+    cmapOpts["cmap"] =  plt.cm.get_cmap(cmapOpts["cmap"])
+    
+    ## Add the plot using pcolormesh
+    if meshOpt:
+        try:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0],
+                                vmax=cmapOpts['cbar-range'][1],
+                                zorder=0)
+        except:
+            mesh = ax.pcolormesh(lon, lat, values, transform=ccrs.PlateCarree(), cmap=cmapOpts["cmap"],
+                                vmin=cmapOpts['cbar-range'][0],
+                                vmax=cmapOpts['cbar-range'][1],
+                                zorder=0)
+
+    ## Add zero value contour
+    if plotZeroContour:
+        # Set any np.nan values to 0.ccrs
+        values[np.isnan(values)] = 0;
+        zeroContour = ax.contour(lon, lat, values, levels=[0], colors='black', transform=ccrs.PlateCarree())
+
+    ## Add solid polygons for nan values
+    if nanSolidPoly:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = np.nan;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        mesh2 = ax.pcolormesh(lon, lat, valuesNan,
+                              transform=ccrs.PlateCarree(),
+                              cmap='YlOrRd',
+                              vmin=0, vmax=3, zorder=1)
+    
+    ## Add Line around clusters of nan values
+    if nanSolidPolyOutline:
+        valuesNan                   = cp.deepcopy(BasinIDA)
+        valuesNan[:]                = 0;
+        valuesNan[np.isnan(BasinIDA)] = 1;
+        nanContour = ax.contour(lon, lat, valuesNan,
+                                levels=[1/2],
+                                colors='blue',
+                                linewidths=1.1,
+                                transform=ccrs.PlateCarree(),
+                                zorder=2)
+
+    ## Add contours in integer steps (useful for dividing catagorical data)
+    valuesContour = cp.deepcopy(BasinIDA)
+    if plotIntegerContours:
+        # Set any np.nan values to 0.
+        for i in range(len(np.unique(BasinIDA))):
+            valuesContour[BasinIDA==i] = 1;
+            valuesContour[BasinIDA!=i] = 0;
+            ax.contour(lon, lat, valuesContour,
+                       levels=[1/2],
+                       colors=pltOpts.get("boundaryColor", 'k'),
+                       linewidths=pltOpts.get("boundaryLinewidth", 1),
+                       transform=ccrs.PlateCarree(),
+                       zorder=1)
+
+            
+            
+    ## Add coastlines
+    if coastlinesOpt:
+        ax.coastlines(color='blue', linewidth=1, zorder=10)
+
+    ## Add points
+    if (latPt is not None) & (lonPt is not None) & (valuesPt is not None):
+        if Ptparameter is not None:
+            for lonPti, latPti, s, marker, color in zip(lonPt, latPt, Ptparameter['s'], Ptparameter['marker'], Ptparameter['color']):
+                plt.scatter(lonPti, latPti, s=s, marker=marker, color=color, transform=ccrs.PlateCarree())
+            #plt.scatter(lonPt, latPt, s=Ptparameter['s'], marker=Ptparameter['marker'], color=Ptparameter['color'], transform=ccrs.PlateCarree())
+        else:
+            plt.scatter(lonPt, latPt, transform=ccrs.PlateCarree())
+
+    ## Add a colorbar
+    if meshOpt:
+        cbar = plt.colorbar(mesh, ax=ax, orientation='horizontal', pad=0.05, aspect=40, shrink=0.7)
+
+        ## Set cbar name
+        if regionalZBoundaries:
+            cbar.set_label(label="Regional {} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        else:
+            cbar.set_label(label="{} [{}]".format(pltOpts['valueType'], pltOpts['valueUnits']), size=12);
+        cbar.ax.tick_params(labelsize=10)  # Adjust the size of colorbar ticks
+
+    ## Add gridlines
+    if (region[0]==-180)&(region[1]==180)&(region[2]==-90)&(region[3]==90):
+        gl = ax.gridlines(draw_labels=False,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 30),
+                          ylocs=np.arange(region[2], region[3]+1, 30)
+                         )
+    else:
+        gl = ax.gridlines(draw_labels=True,
+                          crs=ccrs.PlateCarree(),
+                          xlocs=np.arange(region[0], region[1]+1, 20),
+                          ylocs=np.arange(region[2], region[3]+1, 20)
+                         )
+
+        gl.xlabels_top = False
+        gl.xlabels_bottom = True
+        gl.ylabels_left = True
+        gl.ylabels_right = False
+
+        # Set the tick label color here
+        gl.xlabel_style = {"color": "red", "size": 10, "rotation": 0}
+        gl.ylabel_style = {"color": "red", "size": 10, "rotation": 0}
+
+    ## Set a title
+    plt.title(pltOpts['plotTitle'])
+
+    ## Set transparency value
+    try:
+        pltOpts["transparent"];
+    except:
+        pltOpts["transparent"] = False;
+
+
+    # Save figure
+    if savePNG:
+        plt.savefig("{}/{}".format(outputDir,fidName), dpi=800, transparent=pltOpts["transparent"])
+    if saveSVG:
+        plt.savefig("{}/{}".format(outputDir,fidName.replace(".png", ".svg")))
+
+
+
 def plotGlobalSilhouette(
     lat,
     lon,

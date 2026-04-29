@@ -241,15 +241,20 @@ class BathyMeasured():
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/Venus_Magellan_C3-MDIR_ClrTopo_Global_Mosaic_6600m.nc -JN0/5i -Crelief -P -K -Vq> {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
         elif self.model == "Venus":
-            if not os.path.exists("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model)):
-                os.system("wget -O {0}/topographies/{1}/topogrd.img https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/images/topogrd.img".format(data_dir, self.model));
+            if not os.path.exists("{0}/topographies/{1}/topogrd.dat".format(data_dir, self.model)):
+                os.system("wget -O {0}/topographies/{1}/topogrd.dat https://pds-geosciences.wustl.edu/mgn/mgn-v-rss-5-gravity-l2-v1/mg_5201/topo/topogrd.dat".format(data_dir, self.model));
             if not os.path.exists("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model)):
                 # Write netCDF file
-                ## Read .img
-                fid = open("{0}/topographies/{1}/topogrd.img".format(data_dir, self.model), 'rb');
-                elevmodel = np.fromfile(fid, dtype=np.uint8);
-                lonmodel, latmodel = np.meshgrid(np.arange(-180, 180, 1), np.arange(90-1/2, -90, -1) )
-                elevmodel = elevmodel.reshape(180,360);
+                ## Read .dat
+
+                elevmodel = np.loadtxt("{0}/topographies/{1}/topogrd.dat".format(data_dir, self.model))
+                elevmodel = elevmodel.flatten()
+                elevmodel = np.flipud(elevmodel.reshape(180,360))
+                elevmodel = np.roll(elevmodel, 60)
+                resolution = 1;
+                lonmodel, latmodel = np.meshgrid(np.arange(-180+resolution/2, 180, resolution),
+                                                 np.arange(-90+resolution/2,  90,  resolution))
+
                 ## Make netCDF file
                 ncfile = Dataset("{0}/topographies/{1}/topogrd.nc".format(data_dir, self.model), mode='w', format='NETCDF4_CLASSIC') 
 
@@ -302,7 +307,7 @@ class BathyMeasured():
             if verbose:
                 os.system("gmt grdimage {0}/topographies/{1}/LDEM64_PA_pixel_202405.nc -JN0/5i -Crelief -P -K -Vq > {0}/topographies/{1}/{1}.ps".format(data_dir, self.model));
 
-    def readTopo(self, data_dir, new_resolution=1, verbose=True):
+    def readTopo(self, data_dir, new_resolution=1, flipLatitude=False, verbose=True):
         """
         Load and resample topography to a uniform lat/lon grid.
 
@@ -319,6 +324,10 @@ class BathyMeasured():
             Root directory containing the per-body ``topographies`` folder.
         new_resolution : float, optional
             Output angular resolution in degrees (e.g., 1, 0.5). Default 1.
+        flipLatitude : boolean, optional
+            Option to flip both latitude values and topgraphy such that the
+            first row represents negative latitudes. Note that this must
+            be done for some models of input topographies.
         verbose : bool, optional
             If True, prints array shapes/ranges and plots a global map.
 
@@ -755,9 +764,9 @@ class BathyMeasured():
 
         # Feed bathymetry initial model into selected bathymetry calculation function. 
         if methodChoice == "basin volume constraint":
-            bathymetry = waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose = True)
+            bathymetry = waterVolumeMethod(topography, basinVolume, areaWeights, isostaticCompensation, verbose = False)
         elif methodChoice == "basin area constraint":
-            bathymetry = oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose = True)
+            bathymetry = oceanAreaMethod(topography, oceanArea, areaWeights, isostaticCompensation, verbose = False)
 
         # Calculate and define properties of bathymetry model
         self.bathymetry = bathymetry;
@@ -773,7 +782,7 @@ class BathyMeasured():
         ## are define here.
         self.bathymetryAreaDist, self.bathymetryAreaDist_wHighlat, self.binEdges = calculateBathymetryDistributionGlobal(self.bathymetry, self.lat, self.highlatlat, areaWeights, binEdges = None, verbose=True);
 
-    def saveBathymetry(self, verbose=True):
+    def saveBathymetry(self, verbose=True, subName=""):
         """
         Save the derived bathymetry and summary parameters to NetCDF.
 
@@ -786,6 +795,9 @@ class BathyMeasured():
         verbose : bool, optional
             If True, creates the output directory tree if needed
             and prints paths/actions.
+        subName : str, optional
+            A file extention to the general naming scheme for
+            planetary bathymetries.
 
         Writes
         ------
@@ -824,9 +836,9 @@ class BathyMeasured():
         
         # Set netCDF4 filename
         if self.resolution == int(self.resolution):
-            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg{3}.nc".format(self.data_dir,  self.model, self.resolution, subName);
         elif self.resolution*10 == int(self.resolution*10):
-            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg.nc".format(self.data_dir,  self.model, self.resolution);
+            BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.1f}deg{3}.nc".format(self.data_dir,  self.model, self.resolution, subName);
         #BathyPath = "{0}/bathymetries/{1}/{1}_resampled_{2:0.0f}deg.nc".format(self.data_dir,  self.model, self.resolution);
         
         # Make new .nc file
@@ -1063,7 +1075,7 @@ class BathyRecon():
         else:
             print("Multiple netCDF4 files were read from the given etopo directory: {0}.\n{1} will be read and used as the present-day topography throughout this analysis".format(self.etopofid, self.etopofid[0]))
             self.etopofid = self.etopofid[0];
-        
+                
         # Set the radius of planet
         self.radiuskm = 6371.0;
 
@@ -1142,8 +1154,259 @@ class BathyRecon():
                                                                                                                                                                                                                        HAvailable[i]))
                     print("\nInternal heating values of H [W/m/K] = 2.1e-12 (present-day) 3.2e-12 (1.7 Ga), 4.8e-12 (2.8 Ga), 6.4e-12 (3.5 Ga), and 8e-12 (3.95 Ga) available for analysis.")
 
+
+    ##########################################
+    ### FIXME: TESTing on method needed ######
+    ##########################################
+    def setdefineBasinsParms(self,
+                             detectionMethod,
+                             edgeWeightMethod,
+                             fieldMaskParameter,
+                             reducedRes={"on":True,"factor":1},
+                             read=False,
+                             write=True,
+                             verbose=False):
+        """
+        Sets parameters to use with the BasinsEA.defineBasins method.
+
+        Parameters
+        ----------
+        detectionMethod : dict
+            See parameter inputs for BasinsEA.defineBasins.
+        edgeWeightMethod : dict
+            See parameter inputs for BasinsEA.defineBasins.
+        reducedRes : dict, optional
+            See parameter inputs for BasinsEA.defineBasins.
+            The default is {"on":True,"factor":1}.
+        read : bool, optional
+            See parameter inputs for BasinsEA.defineBasins.
+            The default is False.
+        write : bool, optional
+            See parameter inputs for BasinsEA.defineBasins.
+            The default is True.
+        verbose : bool, optional
+            See parameter inputs for BasinsEA.defineBasins.
+            The default is False.
+
+        Return
+        ------
+        None.
+
+        """
+        self.defineBasinsParms = {}
+        self.defineBasinsParms["detectionMethod"]       = detectionMethod
+        self.defineBasinsParms["edgeWeightMethod"]      = edgeWeightMethod
+        self.defineBasinsParms["fieldMaskParameter"]    = fieldMaskParameter
+        self.defineBasinsParms["reducedRes"]            = reducedRes
+        self.defineBasinsParms["read"]                  = read
+        self.defineBasinsParms["write"]                 = write
+        self.defineBasinsParms["verbose"]               = verbose
+
+    ##########################################
+    ### FIXME: TESTing on method needed ######
+    ##########################################
+    def writeReadmeandPlots(self,
+                            writeReadmeandPlotsOpts={},
+                            subfld="subfld"):
+        """
+        Create readme and plots for basin detection.
+
+        Parameter
+        ---------
+        writeReadmePlots : dict, optional
+            entries correspond to the outputs to create.
+            The defaults are shown below.
+            directory : root
+            makeReadme: True
+            Field : True
+            Boundaries-mesh : True
+            Boundaries-contour : True
+            Field+Boundaries : True
+            Field+Stats : True
+            Field+Connections : True
+            Silhouette : True
+        subfld : str
+            Name of the subfolder to store results within.
+            The default is 'subfld'.
+
+        """
+
+        # Set default values
+        writeReadmeandPlotsOpts['directory'] = writeReadmeandPlotsOpts.get("directory", os.getcwd()+"figures/myUndefinedReconstruction")
+        for opt in ["Field", "Boundaries-mesh", "Boundaries-contour", "Field+Boundaries", "Field+Stats", "Field+Connections", "Silhouette"]:
+            writeReadmeandPlotsOpts[opt] = writeReadmeandPlotsOpts.get(opt, False);
+        
+        # Make sure the directory exist
+        os.makedirs(writeReadmeandPlotsOpts['directory']+"/{}".format(subfld), exist_ok=True)
+        
+        # Begin readme file for basin detection
+        if writeReadmeandPlotsOpts['makeReadme']:
+            # Short readme text to write to folder with images
+            readmetxt = "Bathymetry used to calculate basin boundaries.";
+            readmetxt += "\nUsing {0} detection with the DQT-CDF edge weighting method".format(self.defineBasinsParms["detectionMethod"]["method"])
+            readmetxt += "DQT-CDF parameters: 'useQTGaussianShiftedGaussianWeightDistribution' with shorten = sigma*{0} & shift = sigma*{1}, minimum weight = {2})".format(self.defineBasinsParms["edgeWeightMethod"]["shortenFactor"], self.defineBasinsParms["edgeWeightMethod"]["shiftFactor"], self.defineBasinsParms["edgeWeightMethod"]['minWeight']);
+            readmetxt += "\n{} resolution: {}".format(self.defineBasinsParms["detectionMethod"]["method"], self.defineBasinsParms["detectionMethod"]["resolution"]);
+            readmetxt += "\n{} ensemble size: {}".format(self.defineBasinsParms["detectionMethod"]["method"], self.defineBasinsParms["detectionMethod"]["ensembleSize"]);
+            readmetxt += "\nGirvan-Newman minimum unisolated basins: {}".format(self.defineBasinsParms["detectionMethod"]['minBasinCnt']);
+            readmetxt += "\nCommunity merger package is EC.utils.mergePackage(package='{}'), Chi = {}".format(self.defineBasinsParms["detectionMethod"]["mergerPackageName"], ", ".join( list(self.defineBasinsParms["detectionMethod"]["mergerPackage"]['mergeSmallBasins']['threshold'].astype(str)) ));    
+
+
+        # Get small and large basins
+        percentThreshold = 0.5;
+        basinSizeDic = self.basins.getBasinSize(fraction=True, Threshold=percentThreshold)
+
+        readmetxt += basinSizeDic["text"]
+
+        # Get community detection metrics
+        metrics, metricText = self.basins.reportEvaluationMetrics(returnText=True,
+                                                             resolution=self.basins.Fields["Field1"]['resolution'],
+                                                             ensembleSize=self.defineBasinsParms["detectionMethod"]["ensembleSize"],
+                                                             distance_threshold=0.3)
+        readmetxt += ("\n\n" + metricText)
+
+
+        ##################################
+        ### Calculate Silhouette field ###
+        ##################################
+        silhouette = self.basins.interp2regularGrid(propertyName="consensus_silhouette", mask=True)
+
+        # Calculate area weighted average and standard deviation (for plotting)
+        areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution=self.basins.Fields["Field1"]['resolution'],
+                                                                                                  LonStEd = [np.min(self.basins.lon),np.max(self.basins.lon)+self.basins.Fields["Field1"]['resolution']],
+                                                                                                  LatStEd = [np.min(self.basins.lat),np.max(self.basins.lat)+self.basins.Fields["Field1"]['resolution']])
+        ave, std = utils.weightedAvgAndStd(self.basins.bathymetry, areaWeights)
+        aveSilhouette, stdSilhouette = utils.weightedAvgAndStd(silhouette, areaWeights)
+        print( "Silhouette value: {0:2.4f} \u00B1 {1:2.4f}".format(aveSilhouette, stdSilhouette) )
+        readmetxt += ("Silhouette value: {0:2.4f} \u00B1 {1:2.4f}".format(aveSilhouette, stdSilhouette))  
+
+
+        ###########################################
+        ### Report community evaluation metrics ###
+        ###########################################
+        with open(writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld)+"/readme.txt", "w") as text_file:
+            text_file.write(readmetxt)
+
+
+        #####################################
+        ### Plot results of community IDs ###
+        #####################################
+        if writeReadmeandPlotsOpts["Boundaries-mesh"]:
+            plotHelper.plotGlobal(self.basins.lat, self.basins.lon, self.basins.BasinIDA,
+                                outputDir = writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld),
+                                fidName = "plotGlobal.png",
+                                cmapOpts={"cmap":"jet",
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":[0,np.nanmax(self.basins.BasinIDA)]},
+                                pltOpts={"valueType": "BasinID divided by {}".format(self.basins.Fields["Field1"]['parameterName']),
+                                        "valueUnits": "-",
+                                        "plotTitle":"",
+                                        "mesh":True,
+                                        "plotZeroContour":False,
+                                        "plotIntegerContours":True,
+                                        "transparent":True},
+                                savePNG=True,
+                                saveSVG=False)
+
+        if writeReadmeandPlotsOpts["Boundaries-contour"]:
+            plotHelper.plotGlobal(self.basins.lat, self.basins.lon, self.basins.BasinIDA,
+                                outputDir = writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld),
+                                fidName = "plotGlobal_Contour.png",
+                                cmapOpts={"cmap":"jet",
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":[0,np.nanmax(self.basins.BasinIDA)]},
+                                pltOpts={"valueType": "BasinID divided by {}".format(self.basins.Fields["Field1"]['parameterName']),
+                                        "valueUnits": "-",
+                                        "plotTitle":"",
+                                        "mesh":False,
+                                        "coastlines":False,
+                                        "nanSolidPoly":True,
+                                        "nanSolidPolyOutline":True,
+                                        "plotZeroContour":False,
+                                        "plotIntegerContours":True,
+                                        "transparent":True},
+                                savePNG=True,
+                                saveSVG=False)
+
+        # Calculate area weighted average and standard deviation (for plotting)
+        areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution=self.basins.Fields["Field1"]['resolution'],
+                                                                                                  LonStEd = [np.min(self.basins.lon),np.max(self.basins.lon)+self.basins.Fields["Field1"]['resolution']],
+                                                                                                  LatStEd = [np.min(self.basins.lat),np.max(self.basins.lat)+self.basins.Fields["Field1"]['resolution']])
+        ave, std = utils.weightedAvgAndStd(self.basins.bathymetry, areaWeights)
+
+        #########################
+        ### Plot input fields ###
+        #########################
+        plotRange = [0, 6000];
+        N = 1000
+        blues_cm = mpl.colormaps['Blues'].resampled(N)
+
+        if writeReadmeandPlotsOpts["Field"]:
+            #plotRange = [ave-1*std, ave+1*std];
+            plotHelper.plotGlobal(self.basins.lat, self.basins.lon, self.basins.bathymetry,
+                                outputDir = writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld),
+                                fidName = "plotGlobal_{0}.png".format(self.basins.Fields["Field1"]['parameterName']),
+                                cmapOpts={"cmap":blues_cm,
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":plotRange},
+                                pltOpts={"valueType": "{0}".format(self.basins.Fields["Field1"]['parameterName']),
+                                        "valueUnits": "{}".format(self.basins.Fields["Field1"]['parameterUnit']),
+                                        "plotTitle":"",
+                                        "plotZeroContour":False,
+                                        "transparent":True},
+                                savePNG=True,
+                                saveSVG=False)
+        
+        if writeReadmeandPlotsOpts["Field+Boundaries"]:
+            plotHelper.plotGlobalwBoundaries(self.basins.lat, self.basins.lon, self.basins.bathymetry, self.basins.BasinIDA,
+                                outputDir = writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld),
+                                fidName = "plotGlobalwboundaries_{0}.png".format(self.basins.Fields["Field1"]['parameterName']),
+                                cmapOpts={"cmap":blues_cm,
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":plotRange},
+                                pltOpts={"valueType": "{0}".format(self.basins.Fields["Field1"]['parameterName']),
+                                        "valueUnits": "{}".format(self.basins.Fields["Field1"]['parameterUnit']),
+                                        "plotTitle":"",
+                                        "plotZeroContour":False,
+                                        "nanSolidPoly":True,
+                                        "boundaryColor":'k',
+                                        "boundaryLinewidth":1.5,
+                                        "nanSolidPolyOutline":True,
+                                        "plotIntegerContours":True,
+                                        "transparent":True},
+                                savePNG=True,
+                                saveSVG=False)
+
+        ##############################
+        ### Plot Silhouette fields ###
+        ##############################
+        if writeReadmeandPlotsOpts["Silhouette"]:
+            plotHelper.plotGlobalSilhouette(self.basins.lat, self.basins.lon, silhouette, self.basins.BasinIDA,
+                                outputDir = writeReadmeandPlotsOpts["directory"]+"/{}".format(subfld),
+                                fidName = "plotGlobal_silhouette_1_{0}.png".format(self.basins.Fields["Field1"]['parameterName']),
+                                cmapOpts={"cmap":"jet",
+                                        "cbar-title":"cbar-title",
+                                        "cbar-range":[0,
+                                                        1],
+                                        "cbar-levels":np.array([0,.25, .5, .7, 1]),
+                                        "cbar-intervals":np.array([0,.25, .5, .7, 1]),
+                                        "cbar-level-names":["No", "Weak", "Medium", "Strong"]},
+                                pltOpts={"valueType": "{0}".format("Silhouette Structure"),
+                                        "valueUnits": "{}".format("-"),
+                                        "plotTitle":"",
+                                        "plotZeroContour":False,
+                                        "nanSolidPoly":True,
+                                        "nanSolidPolyOutline":True,
+                                        "plotIntegerContours":True,
+                                        "transparent":True},
+                                savePNG=True,
+                                saveSVG=False)
+    ##########################################
+    ### FIXME: TESTing on method needed ######
+    ##########################################
     def run(self, startMa=80, endMa=0, deltaMyr=5, resolution=1,
-            maxBasinCnt=1e5, findBasins=True, verbose=True):
+            fieldThresholds={}, maxBasinCnt=1e5,
+            findBasins=True,  skipfindBasins=False, skipVOCC_BasinStats=False, writeReadmeandPlotsOpts={},
+            verbose=True):
         """
         Execute the reconstruction loop and save outputs (per time slice).
 
@@ -1170,10 +1433,28 @@ class BathyRecon():
             Temporal step (Myr). Default 5.
         resolution : float, optional
             Spatial grid resolution (degrees). Default 1.
+        fieldThresholds : dictionary, optional
+            A set of options used parse the field for shallow and
+            deep components. A shallow field might be defined as
+            {"on":True, "type":"shallow", "equality":"leq",
+            "threshold":600}, while a deep field might be defined
+            as {"on":True, "type":"deep", "equality":"gt",
+            "threshold":600}.
         maxBasinCnt : int, optional
             Maximum number of allowed basins for merging heuristics.
         findBasins : bool, optional
             If True, perform basin identification/merging workflow.
+        skipfindBasins : bool, optional 
+            If True, perform bathymetry calculation only, no basin
+            identification/merging workflow, ocean volume correction,
+            or basin statistics calculations.
+        skipVOCC_BasinStats : bool, optional
+            If True, perform bathymetry calculation & basin
+            identification/merging workflow, but no ocean volume
+            correction or basin statistics calculations.
+        writeReadmeandPlotsOpts : dict, optional
+            Option to create plots and write readme files for 
+            basin detections.
         verbose : bool, optional
             If True, print progress and generate quick looks.
 
@@ -1187,6 +1468,9 @@ class BathyRecon():
         -----
         Requires helper utilities from `utils` and external GMT.
         """
+        # Define defaults to optional inputs
+        fieldThresholds["on"] = fieldThresholds.get("on", False);
+
         # Define all periods to bathymetry for.
         reconAgeVec = list(np.arange(endMa, startMa+deltaMyr, deltaMyr));
 
@@ -1194,7 +1478,7 @@ class BathyRecon():
         for reconAge in (pbar := tqdm(reconAgeVec)):
             # 1. Add ocean lithosphere age-depth relationship 
             # 1a. Read ocean lithosphere age grid
-            self.getOceanLithosphereAgeGrid(age=reconAge, resolution=1, fuzzyAge=False);
+            self.getOceanLithosphereAgeGrid(age=reconAge, resolution=resolution, fuzzyAge=False);
             # 1b. Define topography, latitude, and longitude arrays using ocean lithosphere inputs
             self.lon, self.lat = np.meshgrid(self.oceanLithAge['lon'], self.oceanLithAge['lat']);
             self.topography = np.empty(shape=np.shape(self.lon));
@@ -1211,7 +1495,7 @@ class BathyRecon():
             
             # 3. Add paleoDEM
             # 3a. Read paleoDEM (defined as self.paleoDEM)
-            self.getDEM(age=reconAge, resolution=1, fuzzyAge=False);
+            self.getDEM(age=reconAge, resolution=resolution, fuzzyAge=False);
 
             # 3b. Add paleoDEM
             # Note that bathymetry will now be represented with negative values.
@@ -1232,7 +1516,7 @@ class BathyRecon():
 
             # 6. Create global area weights array
             if reconAge == reconAgeVec[0]:
-                areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = 1, radius = self.radiuskm*1e3, verbose=False);
+                areaWeights, longitudes, latitudes, totalArea, totalAreaCalculated = utils.areaWeights(resolution = resolution, radius = self.radiuskm*1e3, verbose=False);
                 self.areaWeights = areaWeights;
             
             # 7. Define bathymetry
@@ -1265,37 +1549,47 @@ class BathyRecon():
 
                 self.saveBathymetry(reconAge, verbose=True);
 
+                if skipfindBasins==True:
+                    continue;
+
                 # 10. Find basins (Note that this is a partially manual process)
                 ## Define basins class for finding basins
-                basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
-                                    filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
+                basins = utils.BasinsEA(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                    filename="{}_{:0.1f}deg_{:0.0f}Ma.nc".format(self.model, resolution, reconAge),
                                     body=self.model);
 
                 # Define basins based on user input boundaries
                 # If the file exist then read file, otherwise write
                 if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
-                    basins.defineBasins(minBasinCnt = 3,
-                                        method = "Louvain",
-                                        reducedRes={"on":True,"factor":1},
-                                        read=True,
-                                        write=False,
-                                        verbose=False)
+                    basins.defineBasins(detectionMethod    = self.defineBasinsParms["detectionMethod"],
+                                        edgeWeightMethod   = self.defineBasinsParms["edgeWeightMethod"],
+                                        fieldMaskParameter = self.defineBasinsParms["fieldMaskParameter"],
+                                        reducedRes         = self.defineBasinsParms["reducedRes"],
+                                        read               = self.defineBasinsParms["read"],
+                                        write              = self.defineBasinsParms["write"],
+                                        verbose            = self.defineBasinsParms["verbose"])
+                    
                 else:
-                    basins.defineBasins(minBasinCnt = 3,
-                                        method = "Louvain",
-                                        reducedRes={"on":True,"factor":1},
-                                        read=False,
-                                        write=True,
-                                        verbose=False)
-                
-                basins.applyMergeBasinMethods(reconAge,
-                                                utils.mergerPackages(self.model),
-                                                maxBasinCnt=maxBasinCnt);
+                    basins.defineBasins(detectionMethod    = self.defineBasinsParms["detectionMethod"],
+                                        edgeWeightMethod   = self.defineBasinsParms["edgeWeightMethod"],
+                                        fieldMaskParameter = self.defineBasinsParms["fieldMaskParameter"],
+                                        reducedRes         = self.defineBasinsParms["reducedRes"],
+                                        read               = False,
+                                        write              = True,
+                                        verbose            = self.defineBasinsParms["verbose"])
 
+
+                # Merge communities based off criteria 
+                basins.applyMergeBasinMethods(mergerID=0, mergerPackage=self.defineBasinsParms["detectionMethod"]["mergerPackage"])
+
+                # Convert basinID equal area grid to regular grid
+                basins.interp2regularGrid(mask=True)
                 
                 # Assign basins as a BathyRecon class attribute.
                 self.basins = basins;
-                        
+
+                # Create readme and plots for basin detection
+                self.writeReadmeandPlots(writeReadmeandPlotsOpts, subfld = "Recon_{}Ma".format(str(reconAge).zfill(3)));
 
             elif self.thermalSubMethod['type'] == "CM2009":
                 # 9. Save bathymetry model w/o the ocean volume corrections
@@ -1311,38 +1605,83 @@ class BathyRecon():
                 self.saveBathymetry(reconAge, verbose=True);
 
 
+                
+                ## Parsing of data according to provided "equality" and "threshold".
+                if fieldThresholds["on"]:
+                    # Case 1: Parsing of data according to provided "equality" and "threshold".
+
+                    # Update name of parsed bathymetry model to save
+                    subName = "_"+fieldThresholds["type"];
+
+                    # Set all data outside of threshold to NaNs
+                    if fieldThresholds["equality"]=="leq":
+                        self.bathymetry[~(self.bathymetry <= fieldThresholds["threshold"])] = np.nan
+                    elif fieldThresholds["equality"]=="lt":
+                        self.bathymetry[~(self.bathymetry <  fieldThresholds["threshold"])] = np.nan
+                    elif fieldThresholds["equality"]=="geq":
+                        self.bathymetry[~(self.bathymetry >  fieldThresholds["threshold"])] = np.nan
+                    elif fieldThresholds["equality"]=="gt":
+                        self.bathymetry[~(self.bathymetry >= fieldThresholds["threshold"])] = np.nan
+
+                    # Save parsed bathymetry model ()
+                    self.saveBathymetry(reconAge, subName=subName, verbose=True);
+                    print("fieldThresholds['on']: {}".format(fieldThresholds['on']))
+ 
+                else:
+                    # Case 2: No parsing of data
+                    subName = "";
+                
+                if skipfindBasins==True:
+                    continue;
+
+
                 # 10. Find basins (Note that this is a partially manual process)
                 ## Define basins class for finding basins
-                basins = utils.Basins(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
-                                    filename="{}_{}deg_{}Ma.nc".format(self.model, resolution, reconAge),
-                                    body=self.model);
+                basins = utils.BasinsEA(dataDir=os.getcwd()+"/bathymetries/{}".format(self.model),
+                                        filename="{0}_{1:0.1f}deg_{2:0.0f}Ma{3}.nc".format(self.model, resolution, reconAge, subName),
+                                        body=self.model);
 
                 # Define basins based on user input boundaries
                 # If the file exist then read file, otherwise write
                 if os.path.isfile("{}/{}".format(basins.dataDir, basins.filename.replace(".nc","_basinNetwork.gml"))):
-                    basins.defineBasins(minBasinCnt = 3,
-                                        method = "Louvain",
-                                        reducedRes={"on":True,"factor":1},
-                                        read=True,
-                                        write=False,
-                                        verbose=False)
+                    basins.defineBasins(detectionMethod    = self.defineBasinsParms["detectionMethod"],
+                                        edgeWeightMethod   = self.defineBasinsParms["edgeWeightMethod"],
+                                        fieldMaskParameter = self.defineBasinsParms["fieldMaskParameter"],
+                                        reducedRes         = self.defineBasinsParms["reducedRes"],
+                                        read               = self.defineBasinsParms["read"],
+                                        write              = self.defineBasinsParms["write"],
+                                        verbose            = self.defineBasinsParms["verbose"])
                 else:
-                    basins.defineBasins(minBasinCnt = 3,
-                                        method = "Louvain",
-                                        reducedRes={"on":True,"factor":1},
-                                        read=False,
-                                        write=True,
-                                        verbose=False)
+                    basins.defineBasins(detectionMethod    = self.defineBasinsParms["detectionMethod"],
+                                        edgeWeightMethod   = self.defineBasinsParms["edgeWeightMethod"],
+                                        fieldMaskParameter = self.defineBasinsParms["fieldMaskParameter"],
+                                        reducedRes         = self.defineBasinsParms["reducedRes"],
+                                        read               = False,
+                                        write              = True,
+                                        verbose            = self.defineBasinsParms["verbose"])
                 
-                try:
-                    basins.applyMergeBasinMethods(reconAge,
-                                                  utils.mergerPackages("{}_{}".format(self.model, self.thermalSubMethod['type'])),
-                                                  maxBasinCnt=maxBasinCnt);
-                except:
-                    pass
+                # try:
+                #     basins.applyMergeBasinMethods(reconAge,
+                #                                   utils.mergerPackages("{}_{}".format(self.model, self.thermalSubMethod['type'])),
+                #                                   maxBasinCnt=maxBasinCnt);
+                # except:
+                #     pass
+                # Merge communities based off criteria 
+                basins.applyMergeBasinMethods(mergerID=0, mergerPackage=self.defineBasinsParms["detectionMethod"]["mergerPackage"])
+
+                # Convert basinID equal area grid to regular grid
+                basins.interp2regularGrid(mask=True)
+
                 
                 # Assign basins as a BathyRecon class attribute.
                 self.basins = basins;
+
+                # Create readme and plots for basin detection
+                self.writeReadmeandPlots(writeReadmeandPlotsOpts, subfld = "Recon_{}Ma".format(str(reconAge).zfill(3)));
+
+                if skipVOCC_BasinStats==True:
+                    continue
+
                 if findBasins==True:
                     continue;
 
@@ -1354,7 +1693,7 @@ class BathyRecon():
                 # 11b. Apply the ocean volume correction based on the misfit of present-day
                 # distributions and the expected paleo ocean volume.            
                 if reconAge == 0:
-                    self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
+                    self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=resolution, verbose=True)
                 else:
                     try:
                         # If self.etopoKernelDis was defined (i.e., the present-day analysis was previously done) then
@@ -1362,7 +1701,7 @@ class BathyRecon():
                         
 
                         # Apply the ocean volume correction
-                        self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=1, verbose=True)
+                        self.bathymetry, self.sxbin_p = self.addVOCCorrection(reconAge, self.bathymetry, self.VOCTarget, resolution=resolution, verbose=True)
                     except:
                         # Present-day analysis was never done, so self.etopoKernelDis is not defined and will not be applied.
                         pass
@@ -1430,7 +1769,7 @@ class BathyRecon():
         else:
             return self.VOCValues[self.VOCAgeValues == age];
 
-    def saveBathymetry(self, reconAge, verbose=True):
+    def saveBathymetry(self, reconAge, subName="", verbose=True):
         """
         Save the (optionally VOC-corrected) bathymetry and diagnostics to NetCDF.
 
@@ -1457,6 +1796,8 @@ class BathyRecon():
         ----------
         reconAge : int
             Reconstruction age (Ma) to encode in filename.
+        subName : str
+            An extention to the bathymetry .nc file. 
         verbose : bool, optional
             If True, ensures directories exist and prints path.
 
@@ -1473,7 +1814,7 @@ class BathyRecon():
                                      verbose=verbose)     
         
         # Set netCDF4 filename
-        BathyPath = "{0}/bathymetries/{1}/{1}_{2:0.0f}deg_{3:0.0f}Ma.nc".format(self.data_dir,  self.model, self.resolution, reconAge);
+        BathyPath = "{0}/bathymetries/{1}/{1}_{2:0.0f}deg_{3:0.0f}Ma{4}.nc".format(self.data_dir,  self.model, self.resolution, reconAge, subName);
         
         # Make new .nc file
         ncfile = Dataset(BathyPath, mode='w', format='NETCDF4_CLASSIC') 
@@ -1529,7 +1870,7 @@ class BathyRecon():
         AOC.standard_name = 'AOC'
         
         # Format title
-        ncfile.title='{} Bathymetry created from topography resampled at {:0.0f} degrees.'.format(self.model, self.resolution)
+        ncfile.title='{} Bathymetry created from topography resampled at {:0.1f} degrees.'.format(self.model, self.resolution)
 
         # Populate the variables
         lat[:]  = self.lat[:,0];

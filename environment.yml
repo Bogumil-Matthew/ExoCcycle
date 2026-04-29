@@ -1,4 +1,4 @@
-name: exoccycle-GMD
+name: exoccycle-dev
 channels:
   - conda-forge
   - nodefaults
